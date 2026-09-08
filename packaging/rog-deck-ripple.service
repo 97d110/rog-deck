@@ -1,0 +1,23 @@
+[Unit]
+Description=ROG Deck - reactive per-key keyboard ripple
+Documentation=https://github.com/97d110/rog-deck
+After=graphical-session.target
+# asusd owns the keyboard; without it every frame write fails.
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+# @INSTALL_DIR@ is substituted by install.sh with the checkout path.
+ExecStart=/usr/bin/python3 -u -m rog_deck.ripple
+WorkingDirectory=@INSTALL_DIR@
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+# This process reads key events to know where a ripple starts. It needs no
+# other privilege, and it never writes to disk.
+ProtectSystem=strict
+ProtectHome=read-only
+
+[Install]
+WantedBy=default.target

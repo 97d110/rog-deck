@@ -3,8 +3,10 @@
 set -uo pipefail
 SERVICE="rog-deck.service"
 systemctl --user disable --now "$SERVICE" 2>/dev/null || true
+systemctl --user disable --now rog-deck-ripple.service 2>/dev/null || true
 rm -f "$HOME/.config/systemd/user/$SERVICE"
-rm -f "$HOME/.local/bin/rog-deck"
+rm -f "$HOME/.config/systemd/user/rog-deck-ripple.service"
+rm -f "$HOME/.local/bin/rog-deck" "$HOME/.local/bin/rog-deck-ripple"
 rm -f "$HOME/.local/share/applications/rog-deck.desktop"
 systemctl --user daemon-reload
 echo "ROG Deck removed. No hardware settings were changed."

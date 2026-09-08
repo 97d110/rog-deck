@@ -42,6 +42,49 @@ Controls are generated from `/sys/class/firmware-attributes/asus-armoury`,
 which is self-describing (type, range, defaults, enum values). Anything your
 firmware exposes shows up, so this is not hard-coded to one laptop model.
 
+## Reactive keyboard ripple (optional, off by default)
+
+On a per-key board, `rog-deck-ripple` draws a water-drop wave from whichever
+key you press: four concentric rings expanding outward, the leading ring
+brightest and each one behind it dimmer, fading as the wave leaves the edge.
+Type a word and the overlapping ripples light the whole board, then settle.
+
+```bash
+rog-deck-ripple                                  # try it in the foreground
+rog-deck-ripple --colour ff2d55 --speed 12       # hotter, faster
+rog-deck-ripple --rings 6 --spacing 0.9          # more, tighter rings
+rog-deck-ripple --dry-run                        # compute frames, touch nothing
+systemctl --user enable --now rog-deck-ripple    # run it every session
+```
+
+**It reads your keystrokes.** A wave has to start at the key you pressed, so
+the process reads key events from `/dev/input`. It uses only the key's
+position, keeps no history, writes nothing to disk and sends nothing off the
+machine — but it is a process that sees what you type, which is why it ships
+installed-but-disabled and you have to turn it on yourself. It reads only
+devices that report a full alphabet, so lid switches and power buttons are
+left alone.
+
+It restores the keyboard mode and brightness it found on exit, including on
+`systemctl --user stop` (SIGTERM is turned into a normal unwind so the restore
+still runs).
+
+### How it works
+
+| Piece | Source |
+| --- | --- |
+| Is this board per-key? | `advanced_type` in `/usr/share/asusd/aura_support.ron` |
+| LED → HID packet offset | baked table generated from asusctl's `rog-aura` |
+| Physical key positions | rog-control-center's `layouts/<layout>_*.ron`, read at runtime |
+| Writing frames | `DirectAddressingRaw` on asusd — 11 × 64-byte HID packets |
+| Which key was pressed | `/dev/input/event*`, filtered to real keyboards |
+
+Because the layout is read at runtime and the packet table is shared across
+per-key ROG boards, this is not hard-coded to one laptop.
+
+Frame rate is capped around **30fps**: asusd's USB write for the 11 packets
+measures ~33ms, and that is the ceiling, not Python.
+
 ## Requirements
 
 - Linux with `asusd` running (`asusctl` package)
