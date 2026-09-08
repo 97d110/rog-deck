@@ -57,6 +57,19 @@ echo "==> Installing the ripple unit (NOT enabled)"
 sed "s|@INSTALL_DIR@|$REPO_DIR|g" "$REPO_DIR/packaging/rog-deck-ripple.service" \
   > "$UNIT_DIR/rog-deck-ripple.service"
 
+echo "==> Installing the Omarchy bar widget"
+# A Quickshell plugin, symlinked so edits in the checkout hot-reload in the
+# shell. Adding it to the bar is left to the user: `omarchy bar put rog-deck`.
+OMARCHY_PLUGINS="$HOME/.config/omarchy/plugins"
+if [ -d "$HOME/.config/omarchy" ]; then
+  mkdir -p "$OMARCHY_PLUGINS"
+  ln -sfn "$REPO_DIR/omarchy-plugin" "$OMARCHY_PLUGINS/rog-deck"
+  echo "    linked $OMARCHY_PLUGINS/rog-deck"
+  command -v omarchy-shell >/dev/null && omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
+else
+  echo "    Omarchy not detected, skipping the bar widget"
+fi
+
 echo "==> Installing desktop entry"
 mkdir -p "$APP_DIR"
 install -m644 "$REPO_DIR/packaging/rog-deck.desktop" "$APP_DIR/rog-deck.desktop"
@@ -73,6 +86,7 @@ if systemctl --user is-active --quiet "$SERVICE"; then
   echo "  logs:    journalctl --user -u $SERVICE -f"
   echo "  stop:    systemctl --user stop $SERVICE"
   echo "  cli:     rog-deck --help   (if ~/.local/bin is on your PATH)"
+  echo "  widget:  omarchy bar put rog-deck --before omarchy.power"
   echo
   echo "Optional, OFF by default - the reactive keyboard ripple. It reads key"
   echo "events to know where each wave starts; enable it only if that is fine:"

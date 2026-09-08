@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "rog-deck",
+  "name": "ROG Deck",
+  "version": "0.2.0",
+  "author": "97d110",
+  "description": "ASUS ROG controls: performance profile, thermals, keyboard light",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "ROG Deck",
+    "description": "Performance profile, temperatures and keyboard lighting",
+    "category": "System",
+    "allowMultiple": false
+  }
+}

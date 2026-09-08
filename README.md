@@ -42,6 +42,34 @@ Controls are generated from `/sys/class/firmware-attributes/asus-armoury`,
 which is self-describing (type, range, defaults, enum values). Anything your
 firmware exposes shows up, so this is not hard-coded to one laptop model.
 
+## Omarchy bar widget
+
+ROG Deck also ships as a native Omarchy shell plugin, so it sits on the bar
+next to the network and bluetooth widgets rather than living in a browser tab.
+
+```bash
+omarchy bar put rog-deck --before omarchy.power
+```
+
+The bar label shows the CPU temperature and the active profile, tinted with
+the same thresholds the gauges use. Clicking it opens a panel with the
+performance profile, keyboard brightness, and the ripple's switch, colour
+swatches, max brightness and fade time.
+
+It is built from the shell's own component library rather than restyled to
+look similar - `Panel`, `KeyboardPanel`, `PanelSectionHeader`,
+`PanelSeparator`, `PanelSlider` and `Toggle` from `qs.Ui`, with every colour
+and dimension coming from the `Color` and `Style` tokens in `qs.Commons`.
+That means it re-themes with `omarchy theme set` along with the rest of the
+shell, and picks up the spacing/border/font scale the user has configured.
+
+State comes from the HTTP service on `127.0.0.1:8737`, so the widget is a
+front-end rather than a second implementation of the hardware logic. The web
+dashboard remains the full view for fan curves and the deeper firmware knobs.
+
+`install.sh` symlinks `omarchy-plugin/` into `~/.config/omarchy/plugins/`, so
+edits in the checkout hot-reload in the running shell.
+
 ## Reactive keyboard ripple (optional, off by default)
 
 On a per-key board, `rog-deck-ripple` draws a water-drop wave from whichever
