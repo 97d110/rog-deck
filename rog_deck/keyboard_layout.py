@@ -106,7 +106,7 @@ def _parse_shapes(text: str) -> dict[str, dict]:
     return shapes
 
 
-def load_leds() -> tuple[list[Led], float, float]:
+def load_leds(lightbar_full_width: bool = True) -> tuple[list[Led], float, float]:
     """Every addressable LED with a physical position, plus the board extent."""
     board = board_name()
     layout_name, advanced = layout_for_board(board)
@@ -142,7 +142,9 @@ def load_leds() -> tuple[list[Led], float, float]:
                     frac = (i + 0.5) / count
                     led_x = x + advance * frac
                     name = key if count == 1 else f"{key}{count}_{i + 1}"
-                    if key in LIGHTBAR_CONFLICTS:
+                    # Only yield the volume keys' bytes when the bar wants the
+                    # full width; otherwise they stay real keys.
+                    if lightbar_full_width and key in LIGHTBAR_CONFLICTS:
                         continue
                     where = LED_OFFSETS.get(name)
                     if where is None and count > 1:
@@ -174,8 +176,9 @@ def load_leds() -> tuple[list[Led], float, float]:
 
     # Spread the bar evenly across the full keyboard width, just below it, so
     # a wave crossing the board sweeps the whole bar rather than one end.
-    count = len(LIGHTBAR_OFFSETS)
-    for index, (name, where) in enumerate(LIGHTBAR_OFFSETS):
+    zones = LIGHTBAR_OFFSETS if lightbar_full_width else LIGHTBAR_OFFSETS[:2]
+    count = len(zones)
+    for index, (name, where) in enumerate(zones):
         leds.append(Led(
             name=name, key=name, packet=where[0], offset=where[1],
             x=round(width * (index + 0.5) / count, 3),

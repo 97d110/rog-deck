@@ -282,7 +282,8 @@ def _install_signal_handlers() -> None:
 
 
 def run(settings: Settings, dry_run: bool = False, ensure_brightness: bool = True) -> int:
-    leds, width, height = load_leds()
+    stored = ripple_config.load()
+    leds, width, height = load_leds(bool(stored.get("lightbar_full_width", True)))
     if not leds:
         print("This machine has no per-key layout available (needs a PerKey "
               "board and rog-control-center's layout files).", file=sys.stderr)
@@ -292,12 +293,12 @@ def run(settings: Settings, dry_run: bool = False, ensure_brightness: bool = Tru
     def apply_stored(target: Settings) -> None:
         stored = ripple_config.load()
         target.colour = ripple_config.rgb(stored["colour"])
-        # The keyboard's own level drives the effect, so the Fn brightness
-        # keys scale it. A level of 0 is not used as a ceiling, though: on
-        # boards where the backlight cannot be raised by software that would
-        # render the effect permanently invisible with nothing to show why.
-        level = hardware_brightness()
-        target.brightness = level if level else stored["brightness"]
+        # No software brightness scaling. The keyboard's master level scales
+        # every per-key colour in hardware, so the Fn keys already control
+        # this effect; layering our own ceiling on top only made the two
+        # fight. (sysfs and asusctl both report 0 on this board even when the
+        # backlight is plainly on, so they are not usable as a ceiling either.)
+        target.brightness = stored["brightness"]
         target.speed = stored["speed"]
         target.decay = stored["decay"]
         target.steps = stored["steps"]
@@ -321,11 +322,11 @@ def run(settings: Settings, dry_run: bool = False, ensure_brightness: bool = Tru
         previous_mode = writer.led_mode()
         previous_brightness = writer.brightness()
         if ensure_brightness and writer.brightness() == 0:
-            print("keyboard brightness was off; turning it up")
-            try:
-                writer.set_brightness(2)
-            except Exception:
-                print("could not raise brightness; run: asusctl leds set med")
+            # Report, never override: the master level is the keyboard's own
+            # setting and its Fn keys step through it. Writing a value here
+            # made those keys behave like an on/off switch.
+            print("note: asusd reports the backlight as off. If the keyboard "
+                  "looks dark, use its own brightness key.")
 
     pads = set(touchpads())
     wanted = set(typing_keyboards()) | pads
@@ -357,9 +358,7 @@ def run(settings: Settings, dry_run: bool = False, ensure_brightness: bool = Tru
 
             # Cheap stat(); lets either UI recolour the effect live.
             stamp = ripple_config.mtime()
-            level = hardware_brightness()
-            if stamp != config_seen or (level
-                                        and abs(level - settings.brightness) > 0.001):
+            if stamp != config_seen:
                 config_seen = stamp
                 apply_stored(settings)
                 engine.max_age = engine.reach / max(0.1, settings.speed)

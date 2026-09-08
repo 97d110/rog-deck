@@ -104,7 +104,14 @@ def _set_ripple(running: bool) -> None:
 
 
 def apply(values: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Persist settings then drive the hardware into that exact state."""
+    """Persist settings then drive the hardware into that exact state.
+
+    Brightness is only written when the caller explicitly supplied one. The
+    master level belongs to the keyboard - its Fn keys step through it - and
+    stamping a value over it on every mode change is what reduced those keys
+    to an on/off switch.
+    """
+    wants_brightness = bool(values) and "brightness" in values
     config = save(values or {})
     mode = config["mode"]
 
@@ -118,8 +125,8 @@ def apply(values: dict[str, Any] | None = None) -> dict[str, Any]:
         asus.set_aura_brightness("off")
         return status()
 
-    asus.set_aura_brightness(config["brightness"] if config["brightness"] != "off"
-                             else "med")
+    if wants_brightness and config["brightness"] != "off":
+        asus.set_aura_brightness(config["brightness"])
 
     if mode == "effect":
         accepted = asus.AURA_EFFECT_ARGS.get(config["effect"], ())

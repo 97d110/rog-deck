@@ -19,7 +19,12 @@ DEFAULTS: dict[str, Any] = {
     "speed": 9.0,        # wavefront speed, key-units/sec
     "decay": 0.45,       # seconds for a lit key to fade
     "steps": 0,          # 0 = smooth trail, N = N visible bands
-    "base": 0.02,        # idle glow
+    "base": 0.0,         # idle glow; a floor here leaves keys permanently dim
+    # The underside bar's right-hand zones share bytes with VolDown and VolUp,
+    # so a full-width bar necessarily lights those two keys along with it.
+    # True  = bar spans the whole width, volume keys glow with it.
+    # False = volume keys stay dark, bar covers only its left half.
+    "lightbar_full_width": True,
 }
 
 LIMITS = {
@@ -64,6 +69,8 @@ def normalise(values: dict[str, Any]) -> dict[str, Any]:
             if len(text) != 7 or any(c not in "0123456789abcdefABCDEF" for c in text[1:]):
                 text = DEFAULTS["colour"]
             out[key] = text.lower()
+        elif key == "lightbar_full_width":
+            out[key] = bool(value)
         elif key == "steps":
             out[key] = int(_clamp(key, int(value)))
         else:
