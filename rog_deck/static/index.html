@@ -9,86 +9,77 @@
 <body>
 <header class="bar">
   <div class="brand">
-    <span class="logo" aria-hidden="true">◤</span>
-    <div>
-      <h1>ROG Deck</h1>
-      <p id="model" class="muted">detecting…</p>
-    </div>
+    <span class="sigil" aria-hidden="true">▚</span>
+    <span class="who">rog-deck</span>
+    <span class="dim" id="model">detecting…</span>
   </div>
   <div class="live" id="live-badges"></div>
 </header>
 
 <main>
-  <section class="card" id="card-profile">
-    <div class="card-head">
-      <h2>Performance profile</h2>
-      <span class="hint">Power limits and fan curves are scoped per profile</span>
-    </div>
-    <div class="segmented" id="profile-switch" role="group" aria-label="Performance profile"></div>
-    <div id="reboot-note" class="note warn" hidden>
-      A change you made needs a reboot to take effect.
-    </div>
+  <section class="panel" id="p-sensors">
+    <h2><span>sensors</span><i id="stream-state">connecting…</i></h2>
+    <div id="gauges" class="gauges"></div>
+    <p class="foot">
+      Each bar runs from idle to that part's own ceiling — the temperature it
+      throttles at, a fan's full speed, or a power limit.
+      <b class="ok">green</b> fine · <b class="warn">amber</b> warm ·
+      <b class="bad">red</b> at the limit.
+      <span class="dim">Ceilings come from the hardware where it publishes one;
+      <i>(est)</i> marks the ones we had to estimate.</span>
+    </p>
+  </section>
+
+  <section class="panel" id="p-profile">
+    <h2><span>profile</span><i>power limits scale per profile</i></h2>
+    <div id="profile-switch" class="radios" role="radiogroup" aria-label="Performance profile"></div>
+    <div id="reboot-note" class="note warn" hidden>a change you made needs a reboot</div>
     <div id="profile-defaults"></div>
   </section>
 
-  <section class="card span2" id="card-telemetry">
-    <div class="card-head"><h2>Live</h2><span class="hint" id="stream-state">connecting…</span></div>
-    <div class="readouts" id="readouts"></div>
-    <div class="fans" id="fans"></div>
-  </section>
-
-  <section class="card span2" id="card-fans">
-    <div class="card-head">
-      <h2>Fan curves</h2>
-      <span class="hint">Drag a point. Vertical = fan %, horizontal = temperature.</span>
-    </div>
+  <section class="panel wide" id="p-fans">
+    <h2><span>fan curves</span><i>drag a point · ↑↓←→ with focus</i></h2>
     <div class="tabs" id="fan-tabs"></div>
     <div id="curve-host"></div>
-    <div class="row end">
-      <button class="ghost" id="curve-reset">Reset to firmware default</button>
-      <button class="primary" id="curve-save">Apply curve</button>
+    <div class="actions">
+      <button class="btn" id="curve-reset">reset to default</button>
+      <button class="btn go" id="curve-save">apply curve</button>
     </div>
   </section>
 
-  <section class="card" id="card-power">
-    <div class="card-head"><h2>Power &amp; thermals</h2></div>
+  <section class="panel" id="p-power">
+    <h2><span>power &amp; thermals</span></h2>
     <div id="power-attrs" class="stack"></div>
   </section>
 
-  <section class="card" id="card-gpu">
-    <div class="card-head"><h2>Graphics</h2></div>
+  <section class="panel" id="p-gpu">
+    <h2><span>graphics</span></h2>
     <div id="gpu-mode" class="stack"></div>
     <div id="gpu-attrs" class="stack"></div>
   </section>
 
-  <section class="card" id="card-battery">
-    <div class="card-head"><h2>Battery</h2></div>
+  <section class="panel" id="p-battery">
+    <h2><span>battery</span></h2>
     <div id="battery" class="stack"></div>
   </section>
 
-  <section class="card" id="card-lighting">
-    <div class="card-head"><h2>Keyboard lighting</h2></div>
+  <section class="panel" id="p-kbd">
+    <h2><span>keyboard light</span></h2>
     <div id="aura" class="stack"></div>
   </section>
 
-  <section class="card" id="card-slash">
-    <div class="card-head">
-      <h2>Lid light bar</h2>
-      <span class="hint">ASUS calls this Slash Lighting</span>
-    </div>
+  <section class="panel" id="p-slash">
+    <h2><span>lid light bar</span><i>ASUS Slash Lighting</i></h2>
     <div id="slash" class="stack"></div>
   </section>
 
-  <section class="card" id="card-numpad">
-    <div class="card-head">
-      <h2>Trackpad NumberPad</h2>
-      <span class="hint">A switch, so you don't need the corner gesture</span>
-    </div>
+  <section class="panel" id="p-numpad">
+    <h2><span>trackpad numpad</span></h2>
     <div id="numpad" class="stack"></div>
   </section>
 
-  <section class="card" id="card-misc">
-    <div class="card-head"><h2>System</h2></div>
+  <section class="panel" id="p-system">
+    <h2><span>system</span></h2>
     <div id="misc-attrs" class="stack"></div>
   </section>
 </main>

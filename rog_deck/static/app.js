@@ -1,17 +1,23 @@
-/* ROG Deck front-end. No framework, no build step - it ships as-is. */
+/* ROG Deck front-end. No framework, no build step. */
 
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, cls, text) => {
-  const node = document.createElement(tag);
-  if (cls) node.className = cls;
-  if (text !== undefined) node.textContent = text;
-  return node;
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
 };
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 let STATE = null;
 let activeFan = "cpu";
-let draftCurves = {};   // fan -> points, holds unsaved drags
+let draftCurves = {};
 let latestSnapshot = null;
+
+/* asusctl cannot read back the active aura effect, so what the user picked is
+   tracked here for the session rather than pretended to be hardware state. */
+let auraDraft = { effect: null, colour: "#ff0000", colour2: "#0000ff",
+                  speed: "med", direction: "left" };
 
 /* ---------------- transport ---------------- */
 
@@ -32,10 +38,9 @@ function toast(message, kind = "ok") {
   node.className = `toast ${kind}`;
   node.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { node.hidden = true; }, kind === "err" ? 6000 : 2500);
+  toastTimer = setTimeout(() => { node.hidden = true; }, kind === "err" ? 6000 : 2200);
 }
 
-/* Wrap a control action: show errors, refresh state, never leave a dead UI. */
 async function act(fn, okMessage) {
   try {
     const data = await fn();
@@ -44,96 +49,194 @@ async function act(fn, okMessage) {
     render();
   } catch (err) {
     toast(err.message, "err");
-    // Re-read the truth: the hardware may have partially applied the change.
-    try { STATE = await api("/api/state"); render(); } catch { /* keep old view */ }
+    try { STATE = await api("/api/state"); render(); } catch { /* keep view */ }
   }
+}
+
+/* ---------------- theme ---------------- */
+
+function applyTheme(theme) {
+  if (!theme || !theme.colors) return;
+  const root = document.documentElement;
+  for (const [name, value] of Object.entries(theme.colors)) {
+    root.style.setProperty(`--c-${name}`, value);
+  }
+  root.style.colorScheme = theme.mode === "light" ? "light" : "dark";
 }
 
 /* ---------------- widgets ---------------- */
 
-function sliderField(opts) {
-  const { label, sub, value, min, max, step, unit, disabled, onCommit } = opts;
+/* One click applies. The checked row always shows real state, so there is no
+   dropdown that can drift out of step with the hardware. */
+function radioGroup(choices, current, onPick, opts = {}) {
+  const box = el("div", `radios${opts.cols ? ` cols-${opts.cols}` : ""}`);
+  box.setAttribute("role", "radiogroup");
+  if (opts.label) box.setAttribute("aria-label", opts.label);
+  choices.forEach(([value, text]) => {
+    const btn = el("button", null, text);
+    btn.setAttribute("role", "radio");
+    btn.setAttribute("aria-checked", String(value) === String(current) ? "true" : "false");
+    btn.addEventListener("click", () => onPick(value));
+    box.append(btn);
+  });
+  return box;
+}
+
+function labelled(label, sub, control) {
   const field = el("div", "field");
   const top = el("div", "field-top");
   const left = el("div");
   left.append(el("div", "field-label", label));
   if (sub) left.append(el("div", "field-sub", sub));
-  const shown = el("div", "field-value", `${value}${unit || ""}`);
+  top.append(left);
+  field.append(top);
+  if (control) field.append(control);
+  return field;
+}
+
+function sliderField({ label, sub, value, min, max, step, unit, disabled, onCommit }) {
+  const field = el("div", "field");
+  const top = el("div", "field-top");
+  const left = el("div");
+  left.append(el("div", "field-label", label));
+  if (sub) left.append(el("div", "field-sub", sub));
+  const shown = el("div", "field-val", `${value}${unit || ""}`);
   top.append(left, shown);
 
   const input = el("input");
   input.type = "range";
-  input.min = min; input.max = max; input.step = step || 1;
-  input.value = value;
+  input.min = min; input.max = max; input.step = step || 1; input.value = value;
   input.disabled = !!disabled;
   input.addEventListener("input", () => { shown.textContent = `${input.value}${unit || ""}`; });
   input.addEventListener("change", () => onCommit(Number(input.value)));
-
   field.append(top, input);
   return field;
 }
 
-function selectField(label, sub, choices, current, onChange, disabled) {
-  const field = el("div", "field");
-  const top = el("div", "field-top");
-  const left = el("div");
-  left.append(el("div", "field-label", label));
-  if (sub) left.append(el("div", "field-sub", sub));
-  const select = el("select");
-  choices.forEach(([val, text]) => {
-    const opt = el("option", null, text);
-    opt.value = val;
-    if (String(val) === String(current)) opt.selected = true;
-    select.append(opt);
-  });
-  select.disabled = !!disabled;
-  select.addEventListener("change", () => onChange(select.value));
-  top.append(left);
-  field.append(top, select);
-  return field;
-}
-
-function switchField(label, sub, on, onToggle, disabled) {
-  const wrap = el("div", "switch");
-  const left = el("div");
-  left.append(el("div", "field-label", label));
-  if (sub) left.append(el("div", "field-sub", sub));
-  const btn = el("button", "toggle");
+function checkRow(label, on, onToggle, disabled) {
+  const row = el("div", "check");
+  row.append(el("span", null, label));
+  const btn = el("button");
   btn.setAttribute("aria-pressed", on ? "true" : "false");
   btn.setAttribute("aria-label", label);
   btn.disabled = !!disabled;
   btn.addEventListener("click", () => onToggle(!on));
-  wrap.append(left, btn);
-  return wrap;
+  row.append(btn);
+  return row;
 }
 
-/* ---------------- attribute metadata ---------------- */
+/* ---------------- gauges ---------------- */
 
-/* asusctl exposes raw firmware names; these make them readable. Anything not
-   listed still renders, using the firmware's own display_name. */
+function zoneCss(range) {
+  const span = range.max - range.min || 1;
+  const warnAt = clamp(((range.warn - range.min) / span) * 100, 0, 100);
+  const critAt = clamp(((range.crit - range.min) / span) * 100, 0, 100);
+  return `linear-gradient(90deg,
+    var(--c-green) 0 ${warnAt}%,
+    var(--c-yellow) ${warnAt}% ${critAt}%,
+    var(--c-red) ${critAt}% 100%)`;
+}
+
+function gauge({ name, value, unit, range, decimals = 0, limitWord = "throttles",
+                plain = false }) {
+  const r = range || { min: 0, warn: 70, crit: 90, max: 100, source: "default" };
+  const span = r.max - r.min || 1;
+  const pct = clamp(((value - r.min) / span) * 100, 0, 100);
+
+  // `plain` is for values with no "too high" end - battery charge, where more
+  // is simply better - so they get a neutral bar instead of a red zone.
+  let level = "";
+  if (!plain && value >= r.crit) level = "is-bad";
+  else if (!plain && value >= r.warn) level = "is-warn";
+
+  const g = el("div", `gauge ${level}`);
+  g.append(el("div", "g-name", name));
+
+  const val = el("div", "g-val");
+  val.textContent = value == null ? "—" : value.toFixed(decimals);
+  if (unit) val.append(el("small", null, unit));
+  g.append(val);
+
+  const wrap = el("div", "g-wrap");
+  const track = el("div", "g-track");
+  const zones = el("div", "g-zones");
+  if (!plain) zones.style.background = zoneCss(r);
+  const fill = el("div", "g-fill");
+  fill.style.width = `${pct}%`;
+  const mark = el("div", "g-mark");
+  mark.style.left = `calc(${pct}% - 1px)`;
+  track.append(zones, fill, mark);
+  wrap.append(track);
+  g.append(wrap);
+
+  const ticks = el("div", "g-ticks");
+  ticks.append(el("em", null, `${Math.round(r.min)}${unit || ""}`));
+  if (plain || !limitWord) {
+    ticks.append(el("em", null, ""));
+  } else {
+    ticks.append(el("em", null,
+      `${limitWord} ${Math.round(r.crit)}${unit || ""}` +
+      (r.source === "estimate" ? " (est)" : "")));
+  }
+  ticks.append(el("em", null, `${Math.round(r.max)}${unit || ""}`));
+  g.append(ticks);
+  return g;
+}
+
+function renderGauges(snap) {
+  const host = $("#gauges");
+  host.textContent = "";
+  if (!snap) return;
+
+  const temps = snap.temperatures || [];
+  const dgpu = snap.dgpu || {};
+
+  // The headline numbers first: the ones that actually throttle the machine.
+  const cpu = temps.find((t) => t.label.includes("Tctl"));
+  if (cpu) host.append(gauge({ name: "CPU package", value: cpu.celsius, unit: "°", range: cpu.range, decimals: 1 }));
+  if (dgpu.celsius != null) {
+    host.append(gauge({ name: `GPU  ${dgpu.name ? dgpu.name.replace(/^NVIDIA GeForce /, "") : ""}`,
+                        value: dgpu.celsius, unit: "°", range: dgpu.temp_range }));
+  }
+  if (dgpu.watts != null) {
+    host.append(gauge({ name: "GPU power draw", value: dgpu.watts, unit: "W",
+                        range: dgpu.power_range, decimals: 1, limitWord: "limit" }));
+  }
+  (snap.fans || []).forEach((fan) => {
+    host.append(gauge({ name: `${fan.label} fan`, value: fan.rpm, unit: "",
+                        range: fan.range, limitWord: "full tilt" }));
+  });
+  // Drive temps last: informative, rarely the thing that bites.
+  temps.filter((t) => t.kind === "ssd" && t.label.includes("Composite"))
+       .forEach((t) => host.append(
+         gauge({ name: t.label, value: t.celsius, unit: "°", range: t.range, decimals: 1 })));
+}
+
+/* ---------------- attributes ---------------- */
+
 const ENUM_LABELS = {
-  gpu_mux_mode: { 0: "Ultimate — dGPU drives the display", 1: "Optimus — hybrid (battery friendly)" },
+  gpu_mux_mode: { 0: "ultimate · dGPU drives display", 1: "optimus · hybrid" },
   dgpu_disable: { 0: "dGPU available", 1: "dGPU disabled" },
-  panel_overdrive: { 0: "Off", 1: "On — faster pixel response" },
-  boot_sound: { 0: "Silent", 1: "Play the ROG chime" },
-  screen_auto_brightness: { 0: "Off", 1: "On" },
-  charge_mode: { 0: "Standard", 1: "Balanced", 2: "Maximum lifespan" },
+  panel_overdrive: { 0: "off", 1: "on · faster pixels" },
+  boot_sound: { 0: "silent", 1: "ROG chime" },
+  screen_auto_brightness: { 0: "off", 1: "on" },
+  charge_mode: { 0: "standard", 1: "balanced", 2: "max lifespan" },
 };
 
 const FRIENDLY = {
-  ppt_pl1_spl: ["CPU sustained (PL1)", "Long-run power budget"],
-  ppt_pl2_sppt: ["CPU boost (PL2)", "Short bursts"],
-  ppt_pl3_fppt: ["CPU peak (PL3)", "Very brief spikes"],
-  nv_temp_target: ["GPU temp limit", "Throttles the dGPU at this point"],
-  nv_dynamic_boost: ["GPU dynamic boost", "Extra watts shifted from CPU to GPU"],
-  nv_tgp: ["GPU total power", "Board power limit"],
-  nv_base_tgp: ["GPU base power", "Reported by firmware, read-only"],
-  gpu_mux_mode: ["Display MUX", "Needs a reboot"],
-  dgpu_disable: ["Discrete GPU", null],
-  panel_overdrive: ["Panel overdrive", null],
-  boot_sound: ["Boot sound", null],
-  charge_mode: ["Charge mode", "Reported by firmware"],
-  screen_auto_brightness: ["Auto brightness", null],
+  ppt_pl1_spl: ["CPU sustained (PL1)", "long-run power budget"],
+  ppt_pl2_sppt: ["CPU boost (PL2)", "short bursts"],
+  ppt_pl3_fppt: ["CPU peak (PL3)", "brief spikes"],
+  nv_temp_target: ["GPU temp limit", "throttles the dGPU here"],
+  nv_dynamic_boost: ["GPU dynamic boost", "watts shifted from CPU to GPU"],
+  nv_tgp: ["GPU total power", "board power limit"],
+  nv_base_tgp: ["GPU base power", "firmware-reported, read-only"],
+  gpu_mux_mode: ["display MUX", "needs a reboot"],
+  dgpu_disable: ["discrete GPU", null],
+  panel_overdrive: ["panel overdrive", null],
+  boot_sound: ["boot sound", null],
+  charge_mode: ["charge mode", "firmware-reported"],
+  screen_auto_brightness: ["auto brightness", null],
 };
 
 const GROUPS = {
@@ -155,24 +258,19 @@ function attributeControl(attr) {
   if (attr.type === "enumeration") {
     const labels = ENUM_LABELS[attr.name] || {};
     const choices = attr.choices.map((v) => [v, labels[v] ?? String(v)]);
-    // charge_mode is reported by firmware but rejected on write on this board.
     const readOnly = attr.name === "charge_mode";
-    return selectField(label, sub, choices, attr.current,
-      (value) => act(() => api("/api/attribute", { name: attr.name, value: Number(value) }),
-                      `${label} set`),
-      readOnly);
+    const group = radioGroup(choices, attr.current,
+      (value) => act(() => api("/api/attribute", { name: attr.name, value: Number(value) }), `${label} set`),
+      { label });
+    if (readOnly) group.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+    return labelled(label, readOnly ? "read-only on this board" : sub, group);
   }
 
-  // An integer with no usable range is informational only.
   const unusable = attr.min === null || attr.max === null || attr.min >= attr.max;
   if (unusable) {
-    const field = el("div", "field");
-    const top = el("div", "field-top");
-    const left = el("div");
-    left.append(el("div", "field-label", label));
-    if (sub) left.append(el("div", "field-sub", sub));
-    top.append(left, el("div", "field-value", `${attr.current}${UNITS[attr.name] || ""}`));
-    field.append(top);
+    const field = labelled(label, sub, null);
+    field.querySelector(".field-top").append(
+      el("div", "field-val", `${attr.current}${UNITS[attr.name] || ""}`));
     return field;
   }
 
@@ -180,94 +278,77 @@ function attributeControl(attr) {
     label, sub,
     value: attr.current, min: attr.min, max: attr.max, step: attr.step || 1,
     unit: UNITS[attr.name] || "",
-    onCommit: (value) => act(
-      () => api("/api/attribute", { name: attr.name, value }),
-      `${label} → ${value}${UNITS[attr.name] || ""}`),
+    onCommit: (value) => act(() => api("/api/attribute", { name: attr.name, value }),
+                             `${label} → ${value}${UNITS[attr.name] || ""}`),
   });
 }
 
-/* ---------------- fan curve editor ---------------- */
+/* ---------------- fan curve ---------------- */
 
-const CURVE = { w: 620, h: 260, pad: { l: 34, r: 12, t: 12, b: 26 },
-                tMin: 20, tMax: 100 };
+const CURVE = { w: 620, h: 250, pad: { l: 34, r: 12, t: 12, b: 26 }, tMin: 20, tMax: 100 };
 
 function curveScales() {
   const { w, h, pad, tMin, tMax } = CURVE;
-  const iw = w - pad.l - pad.r;
-  const ih = h - pad.t - pad.b;
+  const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
   return {
     x: (t) => pad.l + ((t - tMin) / (tMax - tMin)) * iw,
     y: (p) => pad.t + (1 - p / 100) * ih,
     invX: (px) => tMin + ((px - pad.l) / iw) * (tMax - tMin),
     invY: (py) => (1 - (py - pad.t) / ih) * 100,
-    iw, ih,
   };
 }
 
 function svgEl(tag, attrs) {
-  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
-  for (const [k, v] of Object.entries(attrs || {})) node.setAttribute(k, v);
-  return node;
+  const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs || {})) n.setAttribute(k, v);
+  return n;
 }
 
 function currentTempFor(fan) {
   if (!latestSnapshot) return null;
-  const temps = latestSnapshot.temperatures || [];
-  if (fan === "cpu" || fan === "mid") {
-    const t = temps.find((x) => x.label.includes("Tctl"));
-    return t ? t.celsius : null;
+  if (fan === "gpu") {
+    const d = latestSnapshot.dgpu;
+    return d && d.celsius != null ? d.celsius : null;
   }
-  const dgpu = latestSnapshot.dgpu;
-  return dgpu && dgpu.celsius != null ? dgpu.celsius : null;
+  const t = (latestSnapshot.temperatures || []).find((x) => x.label.includes("Tctl"));
+  return t ? t.celsius : null;
 }
 
 function renderCurve() {
   const host = $("#curve-host");
   host.textContent = "";
-
   const info = STATE.fan_curves;
   if (!info || !info.available) {
-    host.append(el("div", "note info",
-      (info && info.reason) || "Fan curves are not available on this machine."));
+    host.append(el("div", "note info", (info && info.reason) || "fan curves unavailable"));
     return;
   }
-
   const points = draftCurves[activeFan];
-  if (!points) {
-    host.append(el("div", "note info", `No curve data for the ${activeFan} fan.`));
-    return;
-  }
+  if (!points) { host.append(el("div", "note info", `no curve for the ${activeFan} fan`)); return; }
 
   const { w, h, pad, tMin, tMax } = CURVE;
   const s = curveScales();
-  const svg = svgEl("svg", {
-    class: "curve", viewBox: `0 0 ${w} ${h}`,
+  const svg = svgEl("svg", { class: "curve", viewBox: `0 0 ${w} ${h}`,
     preserveAspectRatio: "xMidYMid meet", role: "img",
-    "aria-label": `${activeFan} fan curve`,
-  });
+    "aria-label": `${activeFan} fan curve` });
 
-  // grid + axes
   for (let p = 0; p <= 100; p += 25) {
     svg.append(svgEl("line", { class: "grid-line", x1: pad.l, y1: s.y(p), x2: w - pad.r, y2: s.y(p) }));
-    const label = svgEl("text", { class: "axis-text", x: pad.l - 6, y: s.y(p) + 3, "text-anchor": "end" });
-    label.textContent = `${p}%`;
-    svg.append(label);
+    const t = svgEl("text", { class: "axis-text", x: pad.l - 6, y: s.y(p) + 3, "text-anchor": "end" });
+    t.textContent = `${p}%`;
+    svg.append(t);
   }
-  for (let t = tMin; t <= tMax; t += 20) {
-    svg.append(svgEl("line", { class: "grid-line", x1: s.x(t), y1: pad.t, x2: s.x(t), y2: h - pad.b }));
-    const label = svgEl("text", { class: "axis-text", x: s.x(t), y: h - pad.b + 14, "text-anchor": "middle" });
-    label.textContent = `${t}°`;
-    svg.append(label);
+  for (let c = tMin; c <= tMax; c += 20) {
+    svg.append(svgEl("line", { class: "grid-line", x1: s.x(c), y1: pad.t, x2: s.x(c), y2: h - pad.b }));
+    const t = svgEl("text", { class: "axis-text", x: s.x(c), y: h - pad.b + 14, "text-anchor": "middle" });
+    t.textContent = `${c}°`;
+    svg.append(t);
   }
 
   const path = points.map((p) => `${s.x(p.temp)},${s.y(p.percent)}`).join(" ");
-  svg.append(svgEl("polygon", {
-    class: "curve-area",
-    points: `${s.x(points[0].temp)},${s.y(0)} ${path} ${s.x(points[points.length - 1].temp)},${s.y(0)}`,
-  }));
+  svg.append(svgEl("polygon", { class: "curve-area",
+    points: `${s.x(points[0].temp)},${s.y(0)} ${path} ${s.x(points[points.length - 1].temp)},${s.y(0)}` }));
   svg.append(svgEl("polyline", { class: "curve-line", points: path }));
 
-  // where the chip actually is right now
   const now = currentTempFor(activeFan);
   if (now != null && now >= tMin && now <= tMax) {
     svg.append(svgEl("line", { class: "now-line", x1: s.x(now), y1: pad.t, x2: s.x(now), y2: h - pad.b }));
@@ -277,31 +358,21 @@ function renderCurve() {
   }
 
   points.forEach((point, index) => {
-    const knob = svgEl("circle", {
-      class: "knob", cx: s.x(point.temp), cy: s.y(point.percent), r: 7,
-      tabindex: "0", role: "slider",
-      "aria-label": `point ${index + 1}: ${point.temp} degrees, ${point.percent} percent`,
-    });
+    const knob = svgEl("circle", { class: "knob", cx: s.x(point.temp), cy: s.y(point.percent),
+      r: 6, tabindex: "0", role: "slider",
+      "aria-label": `point ${index + 1}: ${point.temp} degrees, ${point.percent} percent` });
 
     const move = (event) => {
       const rect = svg.getBoundingClientRect();
-      // viewBox units != CSS pixels; convert through the rendered size.
       const px = ((event.clientX - rect.left) / rect.width) * w;
       const py = ((event.clientY - rect.top) / rect.height) * h;
-
-      // Keep points monotonic in temperature so the firmware accepts them.
       const lowT = index === 0 ? tMin : points[index - 1].temp + 1;
       const highT = index === points.length - 1 ? tMax : points[index + 1].temp - 1;
-
-      point.temp = Math.round(Math.min(highT, Math.max(lowT, s.invX(px))));
-      point.percent = Math.round(Math.min(100, Math.max(0, s.invY(py))));
+      point.temp = Math.round(clamp(s.invX(px), lowT, highT));
+      point.percent = Math.round(clamp(s.invY(py), 0, 100));
       renderCurve();
     };
-
-    const stop = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", stop);
-    };
+    const stop = () => window.removeEventListener("pointermove", move);
 
     knob.addEventListener("pointerdown", (event) => {
       event.preventDefault();
@@ -309,7 +380,6 @@ function renderCurve() {
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", stop, { once: true });
     });
-
     knob.addEventListener("keydown", (event) => {
       const step = event.shiftKey ? 5 : 1;
       let handled = true;
@@ -320,10 +390,8 @@ function renderCurve() {
       else handled = false;
       if (handled) { event.preventDefault(); renderCurve(); }
     });
-
     svg.append(knob);
   });
-
   host.append(svg);
 }
 
@@ -337,9 +405,8 @@ function renderFanTabs() {
     btn.addEventListener("click", () => { activeFan = curve.fan; renderFanTabs(); renderCurve(); });
     tabs.append(btn);
   });
-  const enabled = curves.length > 0;
-  $("#curve-save").disabled = !enabled;
-  $("#curve-reset").disabled = !enabled;
+  $("#curve-save").disabled = !curves.length;
+  $("#curve-reset").disabled = !curves.length;
 }
 
 function seedDrafts() {
@@ -352,144 +419,160 @@ function seedDrafts() {
 /* ---------------- sections ---------------- */
 
 function renderProfile() {
-  const box = $("#profile-switch");
-  box.textContent = "";
-  const { current, choices } = STATE.profile;
-  choices.forEach((name) => {
-    const btn = el("button", null, name);
-    btn.setAttribute("aria-pressed", name === current ? "true" : "false");
-    btn.addEventListener("click", () => {
-      if (name === current) return;
-      act(async () => {
-        const data = await api("/api/profile", { profile: name });
-        seedFromProfileChange(data);
-        return data;
-      }, `Profile: ${name}`);
-    });
-    box.append(btn);
-  });
+  const { current, choices, ac_profile: onAc, battery_profile: onBat } = STATE.profile;
+  const host = $("#profile-switch");
+  host.textContent = "";
+  host.append(radioGroup(choices.map((c) => [c, c]), current, (name) => {
+    if (name === current) return;
+    act(async () => {
+      const data = await api("/api/profile", { profile: name });
+      STATE.profile = data.profile;
+      STATE.attributes = data.attributes;
+      STATE.fan_curves = data.fan_curves;
+      seedDrafts();
+      return {};
+    }, `profile → ${name}`);
+  }, { label: "Performance profile" }));
+
   $("#reboot-note").hidden = !STATE.pending_reboot;
 
-  // asusd swaps the active profile when power source changes; without saying
-  // so, that reads as the machine changing settings by itself.
-  const host = $("#profile-defaults");
-  host.textContent = "";
-  const { ac_profile: onAc, battery_profile: onBat } = STATE.profile;
+  const defaults = $("#profile-defaults");
+  defaults.textContent = "";
   if (onAc || onBat) {
     const note = el("div", "note info");
     note.append(document.createTextNode(
-      `Switches automatically: ${onAc || "?"} on AC, ${onBat || "?"} on battery.`));
-    const row = el("div", "row");
-    row.style.marginTop = "8px";
-    [["ac", "Use current on AC"], ["battery", "Use current on battery"]].forEach(([slot, label]) => {
-      const btn = el("button", "ghost", label);
+      `auto-switches to ${onAc || "?"} on AC, ${onBat || "?"} on battery`));
+    const row = el("div", "actions");
+    [["ac", "pin current to AC"], ["battery", "pin current to battery"]].forEach(([slot, label]) => {
+      const btn = el("button", "btn", label);
       btn.addEventListener("click", () => act(
         () => api("/api/profile", { profile: STATE.profile.current, for: slot }),
-        `${STATE.profile.current} saved for ${slot}`));
+        `${STATE.profile.current} pinned to ${slot}`));
       row.append(btn);
     });
     note.append(row);
-    host.append(note);
+    defaults.append(note);
   }
-}
-
-function seedFromProfileChange(data) {
-  STATE.profile = data.profile;
-  STATE.attributes = data.attributes;
-  STATE.fan_curves = data.fan_curves;
-  seedDrafts();
 }
 
 function renderBattery() {
   const host = $("#battery");
   host.textContent = "";
   const bat = STATE.battery;
-  if (!bat.present) { host.append(el("div", "note info", "No battery detected.")); return; }
-
-  const readouts = el("div", "readouts");
-  [["Charge", `${bat.capacity}%`], ["Status", bat.status || "—"]].forEach(([k, v]) => {
-    const card = el("div", "readout");
-    card.append(el("div", "k", k), el("div", "v", v));
-    readouts.append(card);
-  });
-  host.append(readouts);
-
+  if (!bat.present) { host.append(el("div", "note info", "no battery detected")); return; }
+  host.append(gauge({ name: `charge · ${bat.status || "?"}`, value: bat.capacity, unit: "%",
+    range: { min: 0, warn: 100, crit: 100, max: 100, source: "hardware" }, plain: true }));
   host.append(sliderField({
-    label: "Charge limit",
-    sub: "Stopping around 60–80% greatly extends pack life if you run on AC",
+    label: "charge limit",
+    sub: "60–80% greatly extends pack life if you mostly run on AC",
     value: bat.charge_limit ?? 100, min: 20, max: 100, step: 5, unit: "%",
-    onCommit: (percent) => act(() => api("/api/battery-limit", { percent }),
-                               `Charge limit → ${percent}%`),
+    onCommit: (percent) => act(() => api("/api/battery-limit", { percent }), `charge limit → ${percent}%`),
   }));
 }
 
+/* Keyboard light. Brightness is real, readable hardware state, so it updates
+   optimistically then reconciles - the old dropdown appeared to "reset"
+   because it repainted from a read that had not caught up yet. */
 function renderAura() {
   const host = $("#aura");
   host.textContent = "";
   const aura = STATE.aura;
 
-  host.append(selectField("Brightness", null,
-    aura.brightness_choices.map((v) => [v, v]), aura.brightness || "off",
-    (level) => act(() => api("/api/aura-brightness", { level }), `Keyboard: ${level}`)));
+  host.append(labelled("brightness", null,
+    radioGroup(aura.brightness_choices.map((v) => [v, v]), aura.brightness || "off",
+      (level) => {
+        STATE.aura = { ...aura, brightness: level };   // optimistic
+        render();
+        act(() => api("/api/aura-brightness", { level }), `keyboard → ${level}`);
+      }, { label: "Keyboard brightness", cols: 4 })));
 
-  const effectRow = el("div", "field");
-  const top = el("div", "field-top");
-  top.append(el("div", "field-label", "Effect"));
-  const select = el("select");
-  aura.effects.forEach((name) => {
-    const opt = el("option", null, name.replace(/-/g, " "));
-    opt.value = name;
-    select.append(opt);
-  });
-  const colour = el("input");
-  colour.type = "color";
-  colour.value = "#ff3d5a";
-  const apply = el("button", "primary", "Apply");
-  apply.addEventListener("click", () => act(
-    () => api("/api/aura-effect", { effect: select.value, colour: colour.value }),
-    `Effect: ${select.value}`));
-  top.append(select);
-  effectRow.append(top);
-  const row = el("div", "row");
-  row.append(colour, apply);
-  effectRow.append(row);
-  host.append(effectRow);
+  const args = (aura.effect_args && auraDraft.effect)
+    ? (aura.effect_args[auraDraft.effect] || []) : [];
+
+  const apply = (patch) => {
+    Object.assign(auraDraft, patch);
+    if (!auraDraft.effect) return;
+    const accepted = (aura.effect_args && aura.effect_args[auraDraft.effect]) || [];
+    const body = { effect: auraDraft.effect };
+    // Send only what this effect accepts; asusctl hard-errors on extras.
+    accepted.forEach((name) => { body[name] = auraDraft[name]; });
+    render();
+    act(() => api("/api/aura-effect", body), `effect → ${auraDraft.effect}`);
+  };
+
+  host.append(labelled("effect", auraDraft.effect ? null : "pick one to apply it",
+    radioGroup(aura.effects.map((e) => [e, e.replace(/-/g, " ")]), auraDraft.effect,
+      (effect) => apply({ effect }), { label: "Aura effect" })));
+
+  if (args.includes("colour")) {
+    const input = el("input");
+    input.type = "color";
+    input.value = auraDraft.colour;
+    input.addEventListener("change", () => apply({ colour: input.value }));
+    host.append(labelled("colour", null, input));
+  }
+  if (args.includes("colour2")) {
+    const input = el("input");
+    input.type = "color";
+    input.value = auraDraft.colour2;
+    input.addEventListener("change", () => apply({ colour2: input.value }));
+    host.append(labelled("second colour", null, input));
+  }
+  if (args.includes("speed")) {
+    host.append(labelled("speed", null,
+      radioGroup(aura.speeds.map((s) => [s, s]), auraDraft.speed,
+        (speed) => apply({ speed }), { label: "Effect speed" })));
+  }
+  if (args.includes("direction")) {
+    host.append(labelled("direction", null,
+      radioGroup(aura.directions.map((d) => [d, d]), auraDraft.direction,
+        (direction) => apply({ direction }), { label: "Effect direction" })));
+  }
+
+  host.append(el("div", "note info",
+    "asusctl cannot read the active effect back, so the highlighted effect is what this page last applied."));
 }
 
 function renderSlash() {
   const host = $("#slash");
   host.textContent = "";
   const slash = STATE.slash;
-  if (!slash.supported) {
-    host.append(el("div", "note info", "This machine has no Slash light bar."));
-    return;
-  }
+  if (!slash.supported) { host.append(el("div", "note info", "no Slash light bar on this machine")); return; }
 
-  host.append(switchField("Light bar", "Master on/off", true,
-    (on) => act(() => api("/api/slash", { enabled: on }), on ? "Light bar on" : "Light bar off")));
-
-  host.append(selectField("Animation", "“Loading” is the classic ROG sweep",
-    slash.modes.map((m) => [m, m]), null,
-    (mode) => act(() => api("/api/slash", { mode }), `Animation: ${mode}`)));
-
-  host.append(sliderField({
-    label: "Brightness", value: 128, min: 0, max: 255, step: 1,
-    onCommit: (brightness) => act(() => api("/api/slash", { brightness }), "Brightness set"),
-  }));
-
-  const toggles = [
-    ["show_on_boot", "Show on boot"],
-    ["show_on_shutdown", "Show on shutdown"],
-    ["show_on_sleep", "Show on sleep"],
-    ["show_on_battery", "Show on battery"],
-    ["show_battery_warning", "Low battery warning"],
-  ];
-  toggles.forEach(([key, label]) => {
-    host.append(switchField(label, null, true,
-      (on) => act(() => api("/api/slash", { [key]: on }), `${label}: ${on ? "on" : "off"}`)));
+  const row = el("div", "actions");
+  row.style.justifyContent = "flex-start";
+  [["on", true], ["off", false]].forEach(([label, on]) => {
+    const btn = el("button", "btn", label);
+    btn.addEventListener("click", () => act(() => api("/api/slash", { enabled: on }),
+                                            `light bar ${label}`));
+    row.append(btn);
   });
+  host.append(labelled("light bar", "master switch", row));
+
+  host.append(labelled("animation", '"loading" is the classic ROG sweep',
+    radioGroup(slash.modes.map((m) => [m, m.toLowerCase()]), null,
+      (mode) => act(() => api("/api/slash", { mode }), `animation → ${mode}`),
+      { label: "Slash animation" })));
+
+  host.append(sliderField({ label: "brightness", value: 128, min: 0, max: 255, step: 1,
+    onCommit: (brightness) => act(() => api("/api/slash", { brightness }), "brightness set") }));
+
+  [["show_on_boot", "show on boot"], ["show_on_shutdown", "show on shutdown"],
+   ["show_on_sleep", "show on sleep"], ["show_on_battery", "show on battery"],
+   ["show_battery_warning", "low battery warning"]].forEach(([key, label]) => {
+    const wrap = el("div", "actions");
+    wrap.style.justifyContent = "flex-start";
+    [["yes", true], ["no", false]].forEach(([text, on]) => {
+      const btn = el("button", "btn", text);
+      btn.addEventListener("click", () => act(() => api("/api/slash", { [key]: on }),
+                                              `${label}: ${text}`));
+      wrap.append(btn);
+    });
+    host.append(labelled(label, null, wrap));
+  });
+
   host.append(el("div", "note info",
-    "asusctl cannot read these back, so the switches show the action, not stored state."));
+    "asusctl cannot read these back, so these send an action rather than showing stored state."));
 }
 
 function renderGraphics() {
@@ -498,18 +581,17 @@ function renderGraphics() {
   const gfx = STATE.graphics;
   if (!gfx.supported) {
     host.append(el("div", "note info",
-      gfx.error ? `supergfxd: ${gfx.error}` : "supergfxctl is not installed, so mode switching is unavailable."));
+      gfx.error ? `supergfxd: ${gfx.error}` : "supergfxctl not installed"));
     return;
   }
-  host.append(selectField("GPU mode", "Switching logs you out", 
-    gfx.choices.map((m) => [m, m]), gfx.mode,
-    (mode) => {
+  host.append(labelled("GPU mode", "switching usually ends your session",
+    radioGroup(gfx.choices.map((m) => [m, m]), gfx.mode, (mode) => {
       if (mode === gfx.mode) return;
-      if (!confirm(`Switch graphics to ${mode}? This usually ends your session.`)) { render(); return; }
-      act(() => api("/api/graphics", { mode }), `Graphics → ${mode}`);
-    }));
+      if (!confirm(`Switch graphics to ${mode}? This usually logs you out.`)) { render(); return; }
+      act(() => api("/api/graphics", { mode }), `graphics → ${mode}`);
+    }, { label: "GPU mode" })));
   if (gfx.pending && gfx.pending !== "Unknown" && gfx.pending !== gfx.mode) {
-    host.append(el("div", "note warn", `Pending change: ${gfx.pending}`));
+    host.append(el("div", "note warn", `pending: ${gfx.pending}`));
   }
 }
 
@@ -517,30 +599,15 @@ function renderNumpad() {
   const host = $("#numpad");
   host.textContent = "";
   const pad = STATE.numpad;
-  if (!pad.supported) {
-    host.append(el("div", "note info",
-      "asus-numberpad-driver is not installed, so there is nothing to control."));
-    return;
-  }
-  host.append(switchField("NumberPad", "Lights up the keypad on the trackpad",
-    pad.enabled, (on) => act(() => api("/api/numpad", { enabled: on }),
-                             on ? "NumberPad on" : "NumberPad off")));
-
-  host.append(sliderField({
-    label: "Auto-off after inactivity",
-    sub: "0 disables the timeout entirely",
+  if (!pad.supported) { host.append(el("div", "note info", "asus-numberpad-driver not installed")); return; }
+  host.append(checkRow("numpad lit", pad.enabled,
+    (on) => act(() => api("/api/numpad", { enabled: on }), on ? "numpad on" : "numpad off")));
+  host.append(sliderField({ label: "auto-off after idle", sub: "0 disables the timeout",
     value: Number(pad.inactivity_timeout || 120), min: 0, max: 120, step: 10, unit: " s",
-    onCommit: (v) => act(
-      () => api("/api/numpad", { disable_due_inactivity_time: v }), `Auto-off → ${v}s`),
-  }));
-
-  host.append(sliderField({
-    label: "Hold time to activate",
-    sub: "How long to press the top-right corner",
+    onCommit: (v) => act(() => api("/api/numpad", { disable_due_inactivity_time: v }), `auto-off → ${v}s`) }));
+  host.append(sliderField({ label: "corner hold time", sub: "to toggle it by hand",
     value: Number(pad.activation_time || 1), min: 0.2, max: 3, step: 0.1, unit: " s",
-    onCommit: (v) => act(
-      () => api("/api/numpad", { activation_time: v }), `Hold time → ${v}s`),
-  }));
+    onCommit: (v) => act(() => api("/api/numpad", { activation_time: v }), `hold → ${v}s`) }));
 }
 
 function renderAttributes() {
@@ -555,15 +622,14 @@ function renderAttributes() {
       host.append(attributeControl(attr));
       added += 1;
     });
-    if (!added) host.append(el("div", "note info", "Nothing here is exposed by this firmware."));
+    if (!added) host.append(el("div", "note info", "nothing here is exposed by this firmware"));
   }
 }
 
 function render() {
   if (!STATE) return;
-  const model = STATE.model || {};
-  $("#model").textContent = [model.family, model.board].filter(Boolean).join(" · ")
-    || model.product || "unknown model";
+  const m = STATE.model || {};
+  $("#model").textContent = [m.family, m.board].filter(Boolean).join(" · ") || m.product || "";
   renderProfile();
   renderAttributes();
   renderBattery();
@@ -575,18 +641,17 @@ function render() {
   renderCurve();
 }
 
-/* ---------------- live telemetry ---------------- */
+/* ---------------- live ---------------- */
 
-function tempClass(celsius) {
-  if (celsius == null) return "";
-  if (celsius >= 85) return "hot";
-  if (celsius >= 70) return "warm";
-  return "cool";
+function levelOf(value, range) {
+  if (value == null || !range) return "";
+  if (value >= range.crit) return "bad";
+  if (value >= range.warn) return "warn";
+  return "ok";
 }
 
 function renderLive(snap) {
   latestSnapshot = snap;
-
   const temps = snap.temperatures || [];
   const cpu = temps.find((t) => t.label.includes("Tctl"));
   const dgpu = snap.dgpu || {};
@@ -594,54 +659,18 @@ function renderLive(snap) {
 
   const badges = $("#live-badges");
   badges.textContent = "";
-  const items = [
-    ["CPU", cpu ? `${cpu.celsius}°` : "—", tempClass(cpu && cpu.celsius)],
-    ["GPU", dgpu.celsius != null ? `${dgpu.celsius}°` : "—", tempClass(dgpu.celsius)],
-    ["GPU load", dgpu.util != null ? `${dgpu.util}%` : "—", ""],
-    [power.on_ac ? "AC" : "Battery",
-     power.on_ac ? "plugged" : `${power.battery_watts ?? "—"} W`, ""],
-  ];
-  items.forEach(([k, v, cls]) => {
-    const badge = el("div", `badge ${cls}`);
-    badge.append(el("b", null, v), el("span", null, k));
-    badges.append(badge);
+  [
+    ["cpu", cpu ? `${cpu.celsius}°` : "—", levelOf(cpu && cpu.celsius, cpu && cpu.range)],
+    ["gpu", dgpu.celsius != null ? `${dgpu.celsius}°` : "—", levelOf(dgpu.celsius, dgpu.temp_range)],
+    ["load", dgpu.util != null ? `${dgpu.util}%` : "—", ""],
+    [power.on_ac ? "ac" : "batt", power.on_ac ? "plugged" : `${power.battery_watts ?? "—"}W`, ""],
+  ].forEach(([k, v, cls]) => {
+    const b = el("div", `badge ${cls}`);
+    b.append(el("i", null, k), el("b", null, v));
+    badges.append(b);
   });
 
-  const readouts = $("#readouts");
-  readouts.textContent = "";
-  const cards = [
-    ["CPU package", cpu ? cpu.celsius : null, "°C"],
-    ["dGPU", dgpu.celsius ?? null, "°C"],
-    ["dGPU power", dgpu.watts ?? null, "W"],
-    ["dGPU clock", dgpu.clock_mhz ?? null, "MHz"],
-    ["VRAM", dgpu.vram_used_mb != null ? Math.round(dgpu.vram_used_mb) : null, "MB"],
-    ["Load avg", snap.load ?? null, ""],
-  ];
-  cards.forEach(([k, v, unit]) => {
-    const card = el("div", "readout");
-    const value = el("div", "v");
-    value.textContent = v == null ? "—" : String(v);
-    if (unit && v != null) value.append(el("small", null, unit));
-    card.append(el("div", "k", k), value);
-    readouts.append(card);
-  });
-
-  const fansHost = $("#fans");
-  fansHost.textContent = "";
-  (snap.fans || []).forEach((fan) => {
-    // ~6000rpm is the practical ceiling on these chassis; used only for the bar.
-    const pct = Math.min(100, Math.round((fan.rpm / 6000) * 100));
-    const row = el("div", "fan");
-    const track = el("div", "track");
-    const fill = el("div", "fill");
-    fill.style.width = `${pct}%`;
-    track.append(fill);
-    row.append(el("div", "name", fan.label), track,
-                el("div", "rpm", `${fan.rpm} rpm`));
-    fansHost.append(row);
-  });
-
-  // Keep the "now" marker on the curve in step with reality.
+  renderGauges(snap);
   if (STATE && STATE.fan_curves && STATE.fan_curves.available) renderCurve();
 }
 
@@ -649,21 +678,16 @@ function connectStream() {
   const source = new EventSource("/api/stream");
   source.onopen = () => { $("#stream-state").textContent = "live"; };
   source.onmessage = (event) => {
-    try { renderLive(JSON.parse(event.data)); } catch { /* skip a bad frame */ }
+    try { renderLive(JSON.parse(event.data)); } catch { /* skip frame */ }
   };
-  source.onerror = () => {
-    $("#stream-state").textContent = "reconnecting…";
-    // EventSource retries on its own; no manual backoff needed.
-  };
+  source.onerror = () => { $("#stream-state").textContent = "reconnecting…"; };
 }
 
 /* ---------------- boot ---------------- */
 
 $("#curve-save").addEventListener("click", () => act(async () => {
   const data = await api("/api/fan-curve", {
-    profile: STATE.profile.current,
-    fan: activeFan,
-    points: draftCurves[activeFan],
+    profile: STATE.profile.current, fan: activeFan, points: draftCurves[activeFan],
   });
   STATE.fan_curves = data;
   seedDrafts();
@@ -675,15 +699,16 @@ $("#curve-reset").addEventListener("click", () => act(async () => {
   STATE.fan_curves = data;
   seedDrafts();
   return {};
-}, "Fan curves reset"));
+}, "fan curves reset"));
 
 (async function boot() {
   try {
     STATE = await api("/api/state");
+    applyTheme(STATE.theme);
     seedDrafts();
     render();
     connectStream();
   } catch (err) {
-    document.body.prepend(el("div", "note warn", `Could not reach the ROG Deck service: ${err.message}`));
+    document.body.prepend(el("div", "note warn", `cannot reach the rog-deck service: ${err.message}`));
   }
 })();

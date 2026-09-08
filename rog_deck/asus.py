@@ -236,11 +236,31 @@ def reset_fan_curves(profile: str) -> None:
 # Aura (keyboard RGB) and the Slash lid ledbar
 # --------------------------------------------------------------------------
 
-AURA_EFFECTS = [
-    "static", "breathe", "rainbow-cycle", "rainbow-wave", "stars", "rain",
-    "highlight", "laser", "ripple", "pulse", "comet", "flash",
-]
 AURA_BRIGHTNESS = ["off", "low", "med", "high"]
+AURA_SPEEDS = ["low", "med", "high"]
+AURA_DIRECTIONS = ["up", "down", "left", "right"]
+
+# Every effect takes a different set of arguments, and asusctl errors out if it
+# is handed one the effect does not accept - passing --colour to rainbow-cycle
+# is a hard failure, not a no-op. This table mirrors
+# `asusctl aura effect <name> --help` exactly, and the UI uses it to show only
+# the controls an effect actually supports. Long flags throughout: breathe and
+# stars accept --colour but NOT the -c short form the others allow.
+AURA_EFFECT_ARGS: dict[str, tuple[str, ...]] = {
+    "static":        ("colour",),
+    "breathe":       ("colour", "colour2", "speed"),
+    "rainbow-cycle": ("speed",),
+    "rainbow-wave":  ("speed", "direction"),
+    "stars":         ("colour", "colour2", "speed"),
+    "rain":          ("speed",),
+    "highlight":     ("colour", "speed"),
+    "laser":         ("colour", "speed"),
+    "ripple":        ("colour", "speed"),
+    "pulse":         ("colour",),
+    "comet":         ("colour",),
+    "flash":         ("colour",),
+}
+AURA_EFFECTS = list(AURA_EFFECT_ARGS)
 
 
 def aura() -> dict[str, Any]:
@@ -256,6 +276,9 @@ def aura() -> dict[str, Any]:
         "brightness": brightness,
         "brightness_choices": AURA_BRIGHTNESS,
         "effects": AURA_EFFECTS,
+        "effect_args": AURA_EFFECT_ARGS,
+        "speeds": AURA_SPEEDS,
+        "directions": AURA_DIRECTIONS,
     }
 
 
@@ -266,17 +289,31 @@ def set_aura_brightness(level: str) -> None:
 
 
 def set_aura_effect(effect: str, colour: str | None = None,
-                    colour2: str | None = None, speed: str | None = None) -> None:
-    if effect not in AURA_EFFECTS:
+                    colour2: str | None = None, speed: str | None = None,
+                    direction: str | None = None) -> None:
+    """Apply an aura effect, sending only the flags it actually accepts."""
+    accepted = AURA_EFFECT_ARGS.get(effect)
+    if accepted is None:
         raise CommandError(f"unknown effect: {effect}")
+
+    supplied = {
+        "colour": colour, "colour2": colour2,
+        "speed": speed, "direction": direction,
+    }
+
+    if speed and "speed" in accepted and speed not in AURA_SPEEDS:
+        raise CommandError(f"speed must be one of {AURA_SPEEDS}")
+    if direction and "direction" in accepted and direction not in AURA_DIRECTIONS:
+        raise CommandError(f"direction must be one of {AURA_DIRECTIONS}")
+
     argv = ["asusctl", "aura", "effect", effect]
-    # Not every effect accepts every flag; asusctl rejects the extras itself.
-    if colour:
-        argv += ["-c", colour.lstrip("#")]
-    if colour2:
-        argv += ["-C", colour2.lstrip("#")]
-    if speed:
-        argv += ["-s", speed]
+    for name in accepted:
+        value = supplied.get(name)
+        if not value:
+            continue
+        if name in {"colour", "colour2"}:
+            value = str(value).lstrip("#")
+        argv += [f"--{name}", str(value)]
     run(*argv)
 
 

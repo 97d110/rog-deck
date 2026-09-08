@@ -19,7 +19,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 
-from . import __version__, asus, sensors
+from . import __version__, asus, sensors, theme as theme_mod
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
@@ -105,6 +105,7 @@ def state(_: dict[str, Any]) -> dict[str, Any]:
     return {
         "version": __version__,
         "model": _model(),
+        "theme": theme_mod.theme(),
         "profile": profile,
         "attributes": asus.firmware_attributes(),
         "pending_reboot": asus.pending_reboot(),
@@ -140,6 +141,11 @@ def _fan_curves_for(profile: str | None) -> dict[str, Any]:
                 "curves": asus.fan_curves(profile.capitalize())}
     except asus.CommandError as exc:
         return {"available": False, "reason": str(exc)}
+
+
+@get("/api/theme")
+def theme_now(_: dict[str, Any]) -> dict[str, Any]:
+    return theme_mod.theme()
 
 
 @get("/api/sensors")

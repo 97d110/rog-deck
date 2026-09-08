@@ -22,12 +22,21 @@ desktop.
 - **Graphics** — `supergfxctl` mode switching, GPU MUX, dGPU enable, total
   board power, dynamic boost and thermal target.
 - **Battery** — charge limit (the big one for longevity) and live status.
-- **Lighting** — Aura brightness and the twelve keyboard effects, plus the
-  Slash lid light bar including the classic `Loading` animation.
+- **Lighting** — Aura brightness and all twelve keyboard effects. Each effect
+  only offers the controls it actually accepts, because `asusctl` hard-errors
+  when handed an argument an effect does not support (passing a colour to
+  `rainbow-cycle` is a failure, not a no-op).
+- **Slash lid light bar** — enable, brightness, and all sixteen animations
+  including the classic `Loading` sweep.
 - **NumberPad** — a real on/off switch for `asus-numberpad-driver`, so you
   don't have to hold the trackpad corner, plus hold-time and auto-off tuning.
-- **Live telemetry** — three fan RPMs, CPU/GPU/SSD temperatures, dGPU power,
-  clock and VRAM, streamed over Server-Sent Events.
+- **Live telemetry with context** — every reading is a gauge showing where the
+  value sits between idle and that part's own ceiling, so you can tell "warm"
+  from "about to throttle" at a glance. Ceilings come from the hardware where
+  it publishes them (NVMe `temp1_crit`, the firmware's `nv_temp_target`,
+  nvidia's power limit) and are marked `(est)` where they had to be estimated.
+- **Follows your Omarchy theme** — colours are read from the active theme's
+  `colors.toml`, so `omarchy theme set` re-themes the dashboard too.
 
 Controls are generated from `/sys/class/firmware-attributes/asus-armoury`,
 which is self-describing (type, range, defaults, enum values). Anything your
