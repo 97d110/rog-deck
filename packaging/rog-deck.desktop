@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=ROG Deck
+GenericName=ASUS Laptop Control
+Comment=Fan curves, power limits, GPU mode, lighting and battery care
+Exec=xdg-open http://127.0.0.1:8737
+Icon=input-gaming
+Terminal=false
+Categories=System;Settings;HardwareSettings;
+Keywords=asus;rog;fan;gpu;armoury;battery;

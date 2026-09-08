@@ -1,0 +1,19 @@
+[Unit]
+Description=ROG Deck - ASUS laptop control dashboard
+Documentation=https://github.com/97d110/rog-deck
+After=graphical-session.target
+
+[Service]
+Type=simple
+# @INSTALL_DIR@ is substituted by install.sh with the checkout path.
+ExecStart=/usr/bin/python3 -m rog_deck --host 127.0.0.1 --port 8737
+WorkingDirectory=@INSTALL_DIR@
+Restart=on-failure
+RestartSec=2
+# The dashboard only ever reads sysfs and shells out to asusctl; it never
+# needs privileges of its own.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
