@@ -140,6 +140,21 @@ Item {
     + "Auto brightness uses the ambient light sensor.\n\n"
     + "Boot sound plays the ROG chime at power-on."
 
+  // Type-to-filter. Deliberately not a focusable TextField: the panel catches
+  // keystrokes itself and the field is a read-out, so nothing ever has to be
+  // clicked into and no control can steal the keys.
+  property string filter: ""
+
+  function matches(haystack) {
+    if (filter === "") return true
+    var hay = String(haystack).toLowerCase()
+    var terms = filter.toLowerCase().split(/\s+/)
+    for (var i = 0; i < terms.length; i++) {
+      if (terms[i] !== "" && hay.indexOf(terms[i]) === -1) return false
+    }
+    return true
+  }
+
   // Explanation tip state. The tip is drawn in the window's top layer rather
   // than beside each icon, because the scrolling container clips its children.
   property string tipText: ""
@@ -280,7 +295,28 @@ Item {
         anchors.fill: parent
         anchors.margins: Style.spacing.panelPadding
         focus: true
-        Keys.onEscapePressed: root.dismiss()
+
+        // Escape clears a filter first and only closes the app once there is
+        // nothing left to clear, so a stray search never costs you the window.
+        Keys.onPressed: function (event) {
+          if (event.key === Qt.Key_Escape) {
+            if (root.filter !== "") root.filter = ""
+            else root.dismiss()
+            event.accepted = true
+            return
+          }
+          if (event.key === Qt.Key_Backspace) {
+            root.filter = root.filter.slice(0, -1)
+            event.accepted = true
+            return
+          }
+          // Printable characters only; modifiers and function keys fall
+          // through so they keep working.
+          if (event.text.length === 1 && event.text >= " " && event.text !== "\u007f") {
+            root.filter += event.text
+            event.accepted = true
+          }
+        }
 
         Column {
           id: header
@@ -326,6 +362,75 @@ Item {
             font.family: Style.font.family
             font.pixelSize: Style.font.caption
           }
+
+          // Search read-out. Reads as a prompt rather than an input, because
+          // it is never focused - you just type.
+          Row {
+            width: parent.width
+            spacing: Style.spacing.sm
+            topPadding: Style.spacing.xxs
+
+            Text {
+              text: "search"
+              color: Qt.darker(root.foreground, 1.6)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+            }
+
+            Rectangle {
+              width: Math.max(Style.space(160), query.implicitWidth + Style.spacing.lg)
+              height: query.implicitHeight + Style.spacing.sm
+              radius: Style.cornerRadius
+              color: root.filter === ""
+                ? Qt.alpha(root.foreground, 0.06)
+                : Qt.alpha(Color.accent, 0.14)
+              border.width: 1
+              border.color: root.filter === ""
+                ? Qt.alpha(root.foreground, 0.20) : Qt.alpha(Color.accent, 0.7)
+
+              Behavior on color { ColorAnimation { duration: 130 } }
+              Behavior on border.color { ColorAnimation { duration: 130 } }
+
+              Text {
+                id: query
+                anchors.left: parent.left
+                anchors.leftMargin: Style.spacing.md
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.filter === "" ? "type to filter" : root.filter
+                color: root.filter === ""
+                  ? Qt.darker(root.foreground, 1.9) : root.foreground
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+              }
+
+              // Blinking caret, so it is obvious typing goes here even though
+              // the field cannot be focused.
+              Rectangle {
+                visible: root.filter !== ""
+                anchors.left: query.right
+                anchors.leftMargin: 1
+                anchors.verticalCenter: parent.verticalCenter
+                width: Math.max(1, Style.space(1))
+                height: query.implicitHeight * 0.85
+                color: Color.accent
+                SequentialAnimation on opacity {
+                  running: root.filter !== ""
+                  loops: Animation.Infinite
+                  NumberAnimation { to: 0.15; duration: 480 }
+                  NumberAnimation { to: 1.0; duration: 480 }
+                }
+              }
+            }
+
+            Text {
+              visible: root.filter !== ""
+              text: "Esc clears"
+              color: Qt.darker(root.foreground, 1.8)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+              anchors.verticalCenter: parent.verticalCenter
+            }
+          }
         }
 
         Flickable {
@@ -355,209 +460,239 @@ Item {
               width: (parent.width - Style.spacing.xl) / 2
               spacing: Style.spacing.md
 
-              SectionTitle { text: "Sensors"; info: root.tipSensors; host: root; foreground: root.foreground }
-
-              Gauge {
+              // --- Sensors ---
+              Column {
                 width: parent.width
-                visible: !!root.cpu
-                label: "CPU package"
-                value: root.cpu ? root.cpu.celsius : 0
-                range: root.cpu ? root.cpu.range : null
-                unit: "°"; decimals: 1
-                foreground: root.foreground
-              }
-
-              Gauge {
-                width: parent.width
-                visible: !!(root.dgpu && root.dgpu.celsius !== null)
-                label: root.dgpu && root.dgpu.name
-                  ? root.dgpu.name.replace("NVIDIA GeForce ", "") : "GPU"
-                value: root.dgpu && root.dgpu.celsius !== null ? root.dgpu.celsius : 0
-                range: root.dgpu ? root.dgpu.temp_range : null
-                unit: "°"
-                foreground: root.foreground
-              }
-
-              Gauge {
-                width: parent.width
-                visible: !!(root.dgpu && root.dgpu.watts !== null)
-                label: "GPU power draw"
-                value: root.dgpu && root.dgpu.watts !== null ? root.dgpu.watts : 0
-                range: root.dgpu ? root.dgpu.power_range : null
-                unit: "W"; decimals: 1; limitWord: "limit"
-                foreground: root.foreground
-              }
-
-              Repeater {
-                model: root.snapshot && root.snapshot.fans ? root.snapshot.fans : []
+                spacing: Style.spacing.md
+                visible: root.matches("Sensors temperature temp heat thermal fan rpm cpu gpu power draw watts ssd")
+                SectionTitle { text: "Sensors"; info: root.tipSensors; host: root; foreground: root.foreground }
 
                 Gauge {
-                  required property var modelData
-                  width: leftColumn.width
-                  label: modelData.label + " fan"
-                  value: modelData.rpm
-                  range: modelData.range
-                  limitWord: "full tilt"
+                  width: parent.width
+                  visible: !!root.cpu
+                  label: "CPU package"
+                  value: root.cpu ? root.cpu.celsius : 0
+                  range: root.cpu ? root.cpu.range : null
+                  unit: "°"; decimals: 1
                   foreground: root.foreground
+                }
+
+                Gauge {
+                  width: parent.width
+                  visible: !!(root.dgpu && root.dgpu.celsius !== null)
+                  label: root.dgpu && root.dgpu.name
+                    ? root.dgpu.name.replace("NVIDIA GeForce ", "") : "GPU"
+                  value: root.dgpu && root.dgpu.celsius !== null ? root.dgpu.celsius : 0
+                  range: root.dgpu ? root.dgpu.temp_range : null
+                  unit: "°"
+                  foreground: root.foreground
+                }
+
+                Gauge {
+                  width: parent.width
+                  visible: !!(root.dgpu && root.dgpu.watts !== null)
+                  label: "GPU power draw"
+                  value: root.dgpu && root.dgpu.watts !== null ? root.dgpu.watts : 0
+                  range: root.dgpu ? root.dgpu.power_range : null
+                  unit: "W"; decimals: 1; limitWord: "limit"
+                  foreground: root.foreground
+                }
+
+                Repeater {
+                  model: root.snapshot && root.snapshot.fans ? root.snapshot.fans : []
+
+                  Gauge {
+                    required property var modelData
+                    width: leftColumn.width
+                    label: modelData.label + " fan"
+                    value: modelData.rpm
+                    range: modelData.range
+                    limitWord: "full tilt"
+                    foreground: root.foreground
+              }
                 }
               }
 
-              PanelSeparator { width: parent.width }
-              SectionTitle { text: "Performance profile"; info: root.tipProfile; host: root; foreground: root.foreground }
-
-              RadioGroup {
+              // --- Performance profile ---
+              Column {
                 width: parent.width
-                options: root.textOptions(root.profileInfo ? root.profileInfo.choices : [])
-                current: root.profileInfo ? root.profileInfo.current : null
-                foreground: root.foreground
-                onPicked: function (v) { root.send("/api/profile", { profile: v }) }
-              }
+                spacing: Style.spacing.md
+                visible: root.matches("Performance profile profile quiet balanced performance mode power preset")
+                PanelSeparator { width: parent.width }
+                SectionTitle { text: "Performance profile"; info: root.tipProfile; host: root; foreground: root.foreground }
 
-              Text {
-                visible: !!(root.profileInfo && root.profileInfo.ac_profile)
-                width: parent.width
-                wrapMode: Text.WordWrap
-                text: "Switches automatically: " + (root.profileInfo ? root.profileInfo.ac_profile : "")
-                  + " on AC, " + (root.profileInfo ? root.profileInfo.battery_profile : "") + " on battery"
-                color: root.dim
-                font.family: Style.font.family
-                font.pixelSize: Style.font.caption
-              }
-
-              Text {
-                visible: !!(root.deck && root.deck.pending_reboot)
-                width: parent.width
-                text: "A change you made needs a reboot."
-                color: Color.accent
-                font.family: Style.font.family
-                font.pixelSize: Style.font.caption
-              }
-
-              PanelSeparator { width: parent.width }
-              SectionTitle { text: "Power & thermals"; info: root.tipPower; host: root; foreground: root.foreground }
-
-              Repeater {
-                model: [
-                  { name: "ppt_pl1_spl", label: "CPU sustained (PL1)", hint: "long-run budget" },
-                  { name: "ppt_pl2_sppt", label: "CPU boost (PL2)", hint: "short bursts" },
-                  { name: "ppt_pl3_fppt", label: "CPU peak (PL3)", hint: "brief spikes" }
-                ]
-
-                LabelledSlider {
-                  required property var modelData
-                  readonly property var a: modelData ? root.attr(modelData.name) : null
-                  width: leftColumn.width
-                  visible: !!a && a.min !== null && a.max !== null && a.min < a.max
-                  label: modelData.label
-                  hint: modelData.hint
-                  unit: " W"
-                  minimum: a ? a.min : 0
-                  maximum: a ? a.max : 1
-                  step: a && a.step ? a.step : 1
-                  value: a ? a.current : 0
-                  recommended: a && a.default !== null && a.default !== undefined
-                    ? a.default : NaN
+                RadioGroup {
+                  width: parent.width
+                  options: root.textOptions(root.profileInfo ? root.profileInfo.choices : [])
+                  current: root.profileInfo ? root.profileInfo.current : null
                   foreground: root.foreground
-                  onCommitted: function (v) {
-                    root.send("/api/attribute", { name: modelData.name, value: Math.round(v) })
+                  onPicked: function (v) { root.send("/api/profile", { profile: v }) }
+                }
+
+                Text {
+                  visible: !!(root.profileInfo && root.profileInfo.ac_profile)
+                  width: parent.width
+                  wrapMode: Text.WordWrap
+                  text: "Switches automatically: " + (root.profileInfo ? root.profileInfo.ac_profile : "")
+                    + " on AC, " + (root.profileInfo ? root.profileInfo.battery_profile : "") + " on battery"
+                  color: root.dim
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
+                }
+
+                Text {
+                  visible: !!(root.deck && root.deck.pending_reboot)
+                  width: parent.width
+                  text: "A change you made needs a reboot."
+                  color: Color.accent
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
+              }
+              }
+
+              // --- Power & thermals ---
+              Column {
+                width: parent.width
+                spacing: Style.spacing.md
+                visible: root.matches("Power & thermals ppt pl1 pl2 pl3 watts cpu power limit sustained boost peak thermal")
+                PanelSeparator { width: parent.width }
+                SectionTitle { text: "Power & thermals"; info: root.tipPower; host: root; foreground: root.foreground }
+
+                Repeater {
+                  model: [
+                    { name: "ppt_pl1_spl", label: "CPU sustained (PL1)", hint: "long-run budget" },
+                    { name: "ppt_pl2_sppt", label: "CPU boost (PL2)", hint: "short bursts" },
+                    { name: "ppt_pl3_fppt", label: "CPU peak (PL3)", hint: "brief spikes" }
+                  ]
+
+                  LabelledSlider {
+                    required property var modelData
+                    readonly property var a: modelData ? root.attr(modelData.name) : null
+                    width: leftColumn.width
+                    visible: !!a && a.min !== null && a.max !== null && a.min < a.max
+                    label: modelData.label
+                    hint: modelData.hint
+                    unit: " W"
+                    minimum: a ? a.min : 0
+                    maximum: a ? a.max : 1
+                    step: a && a.step ? a.step : 1
+                    value: a ? a.current : 0
+                    recommended: a && a.default !== null && a.default !== undefined
+                      ? a.default : NaN
+                    foreground: root.foreground
+                    onCommitted: function (v) {
+                      root.send("/api/attribute", { name: modelData.name, value: Math.round(v) })
+              }
                   }
                 }
               }
 
-              PanelSeparator { width: parent.width }
-              SectionTitle { text: "Graphics"; info: root.tipGraphics; host: root; foreground: root.foreground }
-
-              RadioGroup {
+              // --- Graphics ---
+              Column {
                 width: parent.width
-                visible: !!(root.graphics && root.graphics.supported)
-                label: "GPU mode"
-                hint: "switching ends your session"
-                options: root.textOptions(root.graphics ? root.graphics.choices : [])
-                current: root.graphics ? root.graphics.mode : null
-                foreground: root.foreground
-                onPicked: function (v) {
-                  if (root.graphics && v === root.graphics.mode) return
-                  root.send("/api/graphics", { mode: v })
-                }
-              }
+                spacing: Style.spacing.md
+                visible: root.matches("Graphics gpu mux optimus ultimate dgpu nvidia tgp dynamic boost temp limit supergfx display")
+                PanelSeparator { width: parent.width }
+                SectionTitle { text: "Graphics"; info: root.tipGraphics; host: root; foreground: root.foreground }
 
-              RadioGroup {
-                width: parent.width
-                readonly property var a: root.attr("gpu_mux_mode")
-                visible: !!a
-                label: "Display MUX"
-                hint: "needs a reboot"
-                options: root.enumOptions(a, { 0: "Ultimate — dGPU drives the display",
-                                               1: "Optimus — hybrid" })
-                current: a ? a.current : null
-                foreground: root.foreground
-                onPicked: function (v) { root.send("/api/attribute", { name: "gpu_mux_mode", value: v }) }
-              }
-
-              RadioGroup {
-                width: parent.width
-                readonly property var a: root.attr("dgpu_disable")
-                visible: !!a
-                label: "Discrete GPU"
-                options: root.enumOptions(a, { 0: "available", 1: "disabled" })
-                current: a ? a.current : null
-                foreground: root.foreground
-                onPicked: function (v) { root.send("/api/attribute", { name: "dgpu_disable", value: v }) }
-              }
-
-              Repeater {
-                model: [
-                  { name: "nv_tgp", label: "GPU total power", hint: "board limit", unit: " W" },
-                  { name: "nv_dynamic_boost", label: "GPU dynamic boost", hint: "watts from CPU", unit: " W" },
-                  { name: "nv_temp_target", label: "GPU temp limit", hint: "throttles here", unit: " °C" }
-                ]
-
-                LabelledSlider {
-                  required property var modelData
-                  readonly property var a: modelData ? root.attr(modelData.name) : null
-                  width: leftColumn.width
-                  visible: !!a && a.min !== null && a.max !== null && a.min < a.max
-                  label: modelData.label
-                  hint: modelData.hint
-                  unit: modelData.unit
-                  minimum: a ? a.min : 0
-                  maximum: a ? a.max : 1
-                  step: a && a.step ? a.step : 1
-                  value: a ? a.current : 0
-                  recommended: a && a.default !== null && a.default !== undefined
-                    ? a.default : NaN
+                RadioGroup {
+                  width: parent.width
+                  visible: !!(root.graphics && root.graphics.supported)
+                  label: "GPU mode"
+                  hint: "switching ends your session"
+                  options: root.textOptions(root.graphics ? root.graphics.choices : [])
+                  current: root.graphics ? root.graphics.mode : null
                   foreground: root.foreground
-                  onCommitted: function (v) {
-                    root.send("/api/attribute", { name: modelData.name, value: Math.round(v) })
+                  onPicked: function (v) {
+                    if (root.graphics && v === root.graphics.mode) return
+                    root.send("/api/graphics", { mode: v })
+                  }
+                }
+
+                RadioGroup {
+                  width: parent.width
+                  readonly property var a: root.attr("gpu_mux_mode")
+                  visible: !!a
+                  label: "Display MUX"
+                  hint: "needs a reboot"
+                  options: root.enumOptions(a, { 0: "Ultimate — dGPU drives the display",
+                                                 1: "Optimus — hybrid" })
+                  current: a ? a.current : null
+                  foreground: root.foreground
+                  onPicked: function (v) { root.send("/api/attribute", { name: "gpu_mux_mode", value: v }) }
+                }
+
+                RadioGroup {
+                  width: parent.width
+                  readonly property var a: root.attr("dgpu_disable")
+                  visible: !!a
+                  label: "Discrete GPU"
+                  options: root.enumOptions(a, { 0: "available", 1: "disabled" })
+                  current: a ? a.current : null
+                  foreground: root.foreground
+                  onPicked: function (v) { root.send("/api/attribute", { name: "dgpu_disable", value: v }) }
+                }
+
+                Repeater {
+                  model: [
+                    { name: "nv_tgp", label: "GPU total power", hint: "board limit", unit: " W" },
+                    { name: "nv_dynamic_boost", label: "GPU dynamic boost", hint: "watts from CPU", unit: " W" },
+                    { name: "nv_temp_target", label: "GPU temp limit", hint: "throttles here", unit: " °C" }
+                  ]
+
+                  LabelledSlider {
+                    required property var modelData
+                    readonly property var a: modelData ? root.attr(modelData.name) : null
+                    width: leftColumn.width
+                    visible: !!a && a.min !== null && a.max !== null && a.min < a.max
+                    label: modelData.label
+                    hint: modelData.hint
+                    unit: modelData.unit
+                    minimum: a ? a.min : 0
+                    maximum: a ? a.max : 1
+                    step: a && a.step ? a.step : 1
+                    value: a ? a.current : 0
+                    recommended: a && a.default !== null && a.default !== undefined
+                      ? a.default : NaN
+                    foreground: root.foreground
+                    onCommitted: function (v) {
+                      root.send("/api/attribute", { name: modelData.name, value: Math.round(v) })
+              }
                   }
                 }
               }
 
-              PanelSeparator { width: parent.width }
-              SectionTitle { text: "Battery"; info: root.tipBattery; host: root; foreground: root.foreground }
-
-              Gauge {
+              // --- Battery ---
+              Column {
                 width: parent.width
-                visible: !!(root.battery && root.battery.present)
-                label: "charge · " + (root.battery && root.battery.status ? root.battery.status : "")
-                value: root.battery && root.battery.capacity !== null ? root.battery.capacity : 0
-                range: ({ min: 0, warn: 100, crit: 100, max: 100, source: "hardware" })
-                unit: "%"
-                plain: true
-                foreground: root.foreground
+                spacing: Style.spacing.md
+                visible: root.matches("Battery battery charge limit longevity health mains")
+                PanelSeparator { width: parent.width }
+                SectionTitle { text: "Battery"; info: root.tipBattery; host: root; foreground: root.foreground }
+
+                Gauge {
+                  width: parent.width
+                  visible: !!(root.battery && root.battery.present)
+                  label: "charge · " + (root.battery && root.battery.status ? root.battery.status : "")
+                  value: root.battery && root.battery.capacity !== null ? root.battery.capacity : 0
+                  range: ({ min: 0, warn: 100, crit: 100, max: 100, source: "hardware" })
+                  unit: "%"
+                  plain: true
+                  foreground: root.foreground
+                }
+
+                LabelledSlider {
+                  width: parent.width
+                  visible: !!(root.battery && root.battery.present)
+                  label: "Charge limit"
+                  hint: "60–80% is kinder to the pack on AC"
+                  unit: "%"
+                  minimum: 20; maximum: 100; step: 5
+                  value: root.battery && root.battery.charge_limit ? root.battery.charge_limit : 100
+                  foreground: root.foreground
+                  onCommitted: function (v) {
+                    root.send("/api/battery-limit", { percent: Math.round(v) })
               }
-
-              LabelledSlider {
-                width: parent.width
-                visible: !!(root.battery && root.battery.present)
-                label: "Charge limit"
-                hint: "60–80% is kinder to the pack on AC"
-                unit: "%"
-                minimum: 20; maximum: 100; step: 5
-                value: root.battery && root.battery.charge_limit ? root.battery.charge_limit : 100
-                foreground: root.foreground
-                onCommitted: function (v) {
-                  root.send("/api/battery-limit", { percent: Math.round(v) })
                 }
               }
             }
@@ -568,316 +703,340 @@ Item {
               width: (parent.width - Style.spacing.xl) / 2
               spacing: Style.spacing.md
 
-              SectionTitle {
-                text: "Fan curves"
-                info: root.tipFans
-                host: root
-                foreground: root.foreground
-                visible: root.curves.length > 0
-              }
-
-              RadioGroup {
+              // --- Fan curves ---
+              Column {
                 width: parent.width
-                visible: root.curves.length > 0
-                hint: "drag a point, then apply"
-                options: {
-                  var out = []
-                  for (var i = 0; i < root.curves.length; i++)
-                    out.push({ value: root.curves[i].fan, text: root.curves[i].fan + " fan" })
-                  return out
-                }
-                current: root.activeFan
-                foreground: root.foreground
-                onPicked: function (v) {
-                  root.activeFan = v
-                  root.curveDirty = false
-                  root.seedCurve()
-                }
-              }
-
-              FanCurve {
-                width: parent.width
-                visible: root.curves.length > 0
-                points: root.draftCurve
-                nowTemp: root.activeFan === "gpu"
-                  ? (root.dgpu && root.dgpu.celsius !== null ? root.dgpu.celsius : -1)
-                  : (root.cpu ? root.cpu.celsius : -1)
-                foreground: root.foreground
-                onEdited: root.curveDirty = true
-              }
-
-              // Buttons, not toggles: these are actions, and a toggle implied
-              // a stored state that does not exist.
-              Row {
-                width: parent.width
-                spacing: Style.spacing.sm
-                visible: root.curves.length > 0
-
-                Button {
-                  text: root.curveDirty ? "Apply changes" : "Apply curve"
-                  bordered: true
-                  foreground: root.curveDirty ? Color.accent : root.foreground
-                  onClicked: {
-                    root.curveDirty = false
-                    root.send("/api/fan-curve", {
-                      profile: root.profileInfo ? root.profileInfo.current : "",
-                      fan: root.activeFan,
-                      points: root.draftCurve
-                    })
-                  }
-                }
-
-                Button {
-                  text: "Reset to firmware default"
-                  bordered: true
+                spacing: Style.spacing.md
+                visible: root.matches("Fan curves fan curve rpm cooling noise quiet temperature")
+                SectionTitle {
+                  text: "Fan curves"
+                  info: root.tipFans
+                  host: root
                   foreground: root.foreground
-                  onClicked: {
-                    root.curveDirty = false
-                    root.send("/api/fan-curve-reset", {
-                      profile: root.profileInfo ? root.profileInfo.current : ""
-                    })
-                  }
+                  visible: root.curves.length > 0
                 }
-              }
-
-              Text {
-                visible: root.curveDirty
-                width: parent.width
-                text: "Unapplied changes — nothing is written until you apply."
-                color: Color.accent
-                font.family: Style.font.family
-                font.pixelSize: Style.font.caption
-              }
-
-              // ---------------- keyboard lighting ----------------
-              PanelSeparator { width: parent.width }
-              SectionTitle { text: "Keyboard lighting"; info: root.tipLighting; host: root; foreground: root.foreground }
-
-              RadioGroup {
-                width: parent.width
-                visible: !!root.light
-                hint: "one behaviour at a time"
-                // The ripple mode is only offered when its unit is actually
-                // installed; it can be disengaged deliberately, and offering
-                // a mode that cannot start is worse than not offering it.
-                options: {
-                  var out = [
-                    { value: "off", text: "Off", description: "backlight dark" },
-                    { value: "effect", text: "Built-in effect",
-                      description: "a firmware Aura pattern" }
-                  ]
-                  if (root.lighting && root.lighting.ripple_available)
-                    out.push({ value: "ripple", text: "Reactive ripple",
-                               description: "a wave from each key you press" })
-                  return out
-                }
-                current: root.light ? root.light.mode : null
-                foreground: root.foreground
-                onPicked: function (v) { root.sendLight({ mode: v }) }
-              }
-
-              RadioGroup {
-                width: parent.width
-                visible: !!root.light && root.light.mode !== "off"
-                label: "Brightness"
-                hint: "the keyboard's own Fn keys change this too"
-                options: root.textOptions(
-                  (root.lighting ? root.lighting.brightness_choices : [])
-                    .filter(function (b) { return b !== "off" }))
-                current: root.light ? root.light.brightness : null
-                foreground: root.foreground
-                onPicked: function (v) { root.sendLight({ brightness: v }) }
-              }
-
-              Text {
-                visible: !!root.lighting && root.light && root.light.mode !== "off"
-                  && root.lighting.hardware_brightness === "off"
-                width: parent.width
-                wrapMode: Text.WordWrap
-                text: "The hardware reports the backlight as off and is not accepting "
-                  + "brightness changes. Try the keyboard-backlight key, or mains power."
-                color: Color.urgent
-                font.family: Style.font.family
-                font.pixelSize: Style.font.caption
-              }
-
-              RadioGroup {
-                width: parent.width
-                visible: !!root.light && root.light.mode === "effect"
-                label: "Effect"
-                options: root.textOptions(root.lighting ? root.lighting.effects : [])
-                current: root.light ? root.light.effect : null
-                foreground: root.foreground
-                onPicked: function (v) { root.sendLight({ effect: v }) }
-              }
-
-              // Only the controls this effect actually accepts are shown -
-              // asusctl hard-errors on the rest, and hiding them is why the
-              // parameters no longer fight each other.
-              ColourRow {
-                width: parent.width
-                visible: !!root.light && root.light.mode === "effect" && root.effectAccepts("colour")
-                label: "Colour"
-                swatches: root.swatches
-                current: root.light ? root.light.colour : ""
-                foreground: root.foreground
-                onPicked: function (c) { root.sendLight({ colour: c }) }
-              }
-
-              ColourRow {
-                width: parent.width
-                visible: !!root.light && root.light.mode === "effect" && root.effectAccepts("colour2")
-                label: "Second colour"
-                swatches: root.swatches
-                current: root.light ? root.light.colour2 : ""
-                foreground: root.foreground
-                onPicked: function (c) { root.sendLight({ colour2: c }) }
-              }
-
-              RadioGroup {
-                width: parent.width
-                visible: !!root.light && root.light.mode === "effect" && root.effectAccepts("speed")
-                label: "Speed"
-                options: root.textOptions(root.lighting ? root.lighting.speeds : [])
-                current: root.light ? root.light.speed : null
-                foreground: root.foreground
-                onPicked: function (v) { root.sendLight({ speed: v }) }
-              }
-
-              RadioGroup {
-                width: parent.width
-                visible: !!root.light && root.light.mode === "effect" && root.effectAccepts("direction")
-                label: "Direction"
-                options: root.textOptions(root.lighting ? root.lighting.directions : [])
-                current: root.light ? root.light.direction : null
-                foreground: root.foreground
-                onPicked: function (v) { root.sendLight({ direction: v }) }
-              }
-
-              // ---- ripple parameters, only while that mode is chosen ----
-              ColourRow {
-                width: parent.width
-                visible: !!root.light && root.light.mode === "ripple"
-                label: "Ripple colour"
-                swatches: root.swatches
-                current: root.lighting && root.lighting.ripple ? root.lighting.ripple.colour : ""
-                foreground: root.foreground
-                onPicked: function (c) { root.send("/api/ripple", { colour: c }) }
-              }
-
-              Repeater {
-                model: [
-                  { key: "speed", label: "Wave speed", step: 0.5, decimals: 1 },
-                  { key: "decay", label: "Fade time", step: 0.05, decimals: 2, unit: " s" }
-                ]
-
-                LabelledSlider {
-                  required property var modelData
-                  readonly property var lim: modelData && root.lighting
-                    && root.lighting.ripple_limits
-                    ? root.lighting.ripple_limits[modelData.key] : null
-                  width: rightColumn.width
-                  visible: !!(root.light && root.light.mode === "ripple" && lim)
-                  label: modelData.label
-                  unit: modelData.unit ? modelData.unit : ""
-                  decimals: modelData.decimals
-                  minimum: lim ? lim[0] : 0
-                  maximum: lim ? lim[1] : 1
-                  step: modelData.step
-                  value: root.lighting && root.lighting.ripple
-                    ? root.lighting.ripple[modelData.key] : 0
-                  foreground: root.foreground
-                  onCommitted: function (v) {
-                    var patch = {}
-                    patch[modelData.key] = v
-                    root.send("/api/ripple", patch)
-                  }
-                }
-              }
-
-              Text {
-                visible: !!root.light && root.light.mode === "ripple"
-                width: parent.width
-                wrapMode: Text.WordWrap
-                text: "Brightness follows the keyboard's own level, so the Fn "
-                  + "brightness keys scale the ripple with it."
-                color: root.dim
-                font.family: Style.font.family
-                font.pixelSize: Style.font.caption
-              }
-
-              Text {
-                visible: !!root.light && root.light.mode === "ripple"
-                width: parent.width
-                wrapMode: Text.WordWrap
-                text: "The ripple reads key events to know where each wave starts. "
-                  + "Only the key position is used."
-                color: root.dim
-                font.family: Style.font.family
-                font.pixelSize: Style.font.caption
-              }
-
-              // ---------------- numpad ----------------
-              PanelSeparator { width: parent.width; visible: !!(root.numpad && root.numpad.supported) }
-              SectionTitle {
-                text: "Trackpad numpad"
-                info: root.tipNumpad
-                host: root
-                foreground: root.foreground
-                visible: !!(root.numpad && root.numpad.supported)
-              }
-
-              RadioGroup {
-                width: parent.width
-                visible: !!(root.numpad && root.numpad.supported)
-                options: [
-                  { value: "on", text: "Lit", description: "no need for the corner gesture" },
-                  { value: "off", text: "Dark" }
-                ]
-                current: root.numpad && root.numpad.enabled ? "on" : "off"
-                foreground: root.foreground
-                onPicked: function (v) { root.send("/api/numpad", { enabled: v === "on" }) }
-              }
-
-              LabelledSlider {
-                width: parent.width
-                visible: !!(root.numpad && root.numpad.supported)
-                label: "Auto-off after idle"
-                hint: "0 disables it"
-                unit: " s"
-                minimum: 0; maximum: 120; step: 10
-                value: root.numpad ? Number(root.numpad.inactivity_timeout) : 120
-                foreground: root.foreground
-                onCommitted: function (v) {
-                  root.send("/api/numpad", { disable_due_inactivity_time: Math.round(v) })
-                }
-              }
-
-              // ---------------- system ----------------
-              PanelSeparator { width: parent.width }
-              SectionTitle { text: "System"; info: root.tipSystem; host: root; foreground: root.foreground }
-
-              Repeater {
-                model: [
-                  { name: "panel_overdrive", label: "Panel overdrive",
-                    labels: { 0: "off", 1: "on — faster pixels" } },
-                  { name: "screen_auto_brightness", label: "Auto brightness",
-                    labels: { 0: "off", 1: "on" } },
-                  { name: "boot_sound", label: "Boot sound",
-                    labels: { 0: "silent", 1: "ROG chime" } }
-                ]
 
                 RadioGroup {
-                  required property var modelData
-                  readonly property var a: modelData ? root.attr(modelData.name) : null
-                  width: rightColumn.width
-                  visible: !!a
-                  label: modelData.label
-                  options: root.enumOptions(a, modelData.labels)
-                  current: a ? a.current : null
+                  width: parent.width
+                  visible: root.curves.length > 0
+                  hint: "drag a point, then apply"
+                  options: {
+                    var out = []
+                    for (var i = 0; i < root.curves.length; i++)
+                      out.push({ value: root.curves[i].fan, text: root.curves[i].fan + " fan" })
+                    return out
+                  }
+                  current: root.activeFan
                   foreground: root.foreground
                   onPicked: function (v) {
-                    root.send("/api/attribute", { name: modelData.name, value: v })
+                    root.activeFan = v
+                    root.curveDirty = false
+                    root.seedCurve()
+                  }
+                }
+
+                FanCurve {
+                  width: parent.width
+                  visible: root.curves.length > 0
+                  points: root.draftCurve
+                  nowTemp: root.activeFan === "gpu"
+                    ? (root.dgpu && root.dgpu.celsius !== null ? root.dgpu.celsius : -1)
+                    : (root.cpu ? root.cpu.celsius : -1)
+                  foreground: root.foreground
+                  onEdited: root.curveDirty = true
+                }
+
+                // Buttons, not toggles: these are actions, and a toggle implied
+                // a stored state that does not exist.
+                Row {
+                  width: parent.width
+                  spacing: Style.spacing.sm
+                  visible: root.curves.length > 0
+
+                  Button {
+                    text: root.curveDirty ? "Apply changes" : "Apply curve"
+                    bordered: true
+                    foreground: root.curveDirty ? Color.accent : root.foreground
+                    onClicked: {
+                      root.curveDirty = false
+                      root.send("/api/fan-curve", {
+                        profile: root.profileInfo ? root.profileInfo.current : "",
+                        fan: root.activeFan,
+                        points: root.draftCurve
+                      })
+                    }
+                  }
+
+                  Button {
+                    text: "Reset to firmware default"
+                    bordered: true
+                    foreground: root.foreground
+                    onClicked: {
+                      root.curveDirty = false
+                      root.send("/api/fan-curve-reset", {
+                        profile: root.profileInfo ? root.profileInfo.current : ""
+                      })
+                    }
+                  }
+                }
+
+                Text {
+                  visible: root.curveDirty
+                  width: parent.width
+                  text: "Unapplied changes — nothing is written until you apply."
+                  color: Color.accent
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
+                }
+
+                // ---------------- keyboard lighting ----------------
+              }
+              // --- Keyboard lighting ---
+              Column {
+                width: parent.width
+                spacing: Style.spacing.md
+                visible: root.matches("Keyboard lighting keyboard light lighting aura rgb brightness effect ripple colour color backlight")
+                PanelSeparator { width: parent.width }
+                SectionTitle { text: "Keyboard lighting"; info: root.tipLighting; host: root; foreground: root.foreground }
+
+                RadioGroup {
+                  width: parent.width
+                  visible: !!root.light
+                  hint: "one behaviour at a time"
+                  // The ripple mode is only offered when its unit is actually
+                  // installed; it can be disengaged deliberately, and offering
+                  // a mode that cannot start is worse than not offering it.
+                  options: {
+                    var out = [
+                      { value: "off", text: "Off", description: "backlight dark" },
+                      { value: "effect", text: "Built-in effect",
+                        description: "a firmware Aura pattern" }
+                    ]
+                    if (root.lighting && root.lighting.ripple_available)
+                      out.push({ value: "ripple", text: "Reactive ripple",
+                                 description: "a wave from each key you press" })
+                    return out
+                  }
+                  current: root.light ? root.light.mode : null
+                  foreground: root.foreground
+                  onPicked: function (v) { root.sendLight({ mode: v }) }
+                }
+
+                RadioGroup {
+                  width: parent.width
+                  visible: !!root.light && root.light.mode !== "off"
+                  label: "Brightness"
+                  hint: "the keyboard's own Fn keys change this too"
+                  options: root.textOptions(
+                    (root.lighting ? root.lighting.brightness_choices : [])
+                      .filter(function (b) { return b !== "off" }))
+                  current: root.light ? root.light.brightness : null
+                  foreground: root.foreground
+                  onPicked: function (v) { root.sendLight({ brightness: v }) }
+                }
+
+                Text {
+                  visible: !!root.lighting && root.light && root.light.mode !== "off"
+                    && root.lighting.hardware_brightness === "off"
+                  width: parent.width
+                  wrapMode: Text.WordWrap
+                  text: "The hardware reports the backlight as off and is not accepting "
+                    + "brightness changes. Try the keyboard-backlight key, or mains power."
+                  color: Color.urgent
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
+                }
+
+                RadioGroup {
+                  width: parent.width
+                  visible: !!root.light && root.light.mode === "effect"
+                  label: "Effect"
+                  options: root.textOptions(root.lighting ? root.lighting.effects : [])
+                  current: root.light ? root.light.effect : null
+                  foreground: root.foreground
+                  onPicked: function (v) { root.sendLight({ effect: v }) }
+                }
+
+                // Only the controls this effect actually accepts are shown -
+                // asusctl hard-errors on the rest, and hiding them is why the
+                // parameters no longer fight each other.
+                ColourRow {
+                  width: parent.width
+                  visible: !!root.light && root.light.mode === "effect" && root.effectAccepts("colour")
+                  label: "Colour"
+                  swatches: root.swatches
+                  current: root.light ? root.light.colour : ""
+                  foreground: root.foreground
+                  onPicked: function (c) { root.sendLight({ colour: c }) }
+                }
+
+                ColourRow {
+                  width: parent.width
+                  visible: !!root.light && root.light.mode === "effect" && root.effectAccepts("colour2")
+                  label: "Second colour"
+                  swatches: root.swatches
+                  current: root.light ? root.light.colour2 : ""
+                  foreground: root.foreground
+                  onPicked: function (c) { root.sendLight({ colour2: c }) }
+                }
+
+                RadioGroup {
+                  width: parent.width
+                  visible: !!root.light && root.light.mode === "effect" && root.effectAccepts("speed")
+                  label: "Speed"
+                  options: root.textOptions(root.lighting ? root.lighting.speeds : [])
+                  current: root.light ? root.light.speed : null
+                  foreground: root.foreground
+                  onPicked: function (v) { root.sendLight({ speed: v }) }
+                }
+
+                RadioGroup {
+                  width: parent.width
+                  visible: !!root.light && root.light.mode === "effect" && root.effectAccepts("direction")
+                  label: "Direction"
+                  options: root.textOptions(root.lighting ? root.lighting.directions : [])
+                  current: root.light ? root.light.direction : null
+                  foreground: root.foreground
+                  onPicked: function (v) { root.sendLight({ direction: v }) }
+                }
+
+                // ---- ripple parameters, only while that mode is chosen ----
+                ColourRow {
+                  width: parent.width
+                  visible: !!root.light && root.light.mode === "ripple"
+                  label: "Ripple colour"
+                  swatches: root.swatches
+                  current: root.lighting && root.lighting.ripple ? root.lighting.ripple.colour : ""
+                  foreground: root.foreground
+                  onPicked: function (c) { root.send("/api/ripple", { colour: c }) }
+                }
+
+                Repeater {
+                  model: [
+                    { key: "speed", label: "Wave speed", step: 0.5, decimals: 1 },
+                    { key: "decay", label: "Fade time", step: 0.05, decimals: 2, unit: " s" }
+                  ]
+
+                  LabelledSlider {
+                    required property var modelData
+                    readonly property var lim: modelData && root.lighting
+                      && root.lighting.ripple_limits
+                      ? root.lighting.ripple_limits[modelData.key] : null
+                    width: rightColumn.width
+                    visible: !!(root.light && root.light.mode === "ripple" && lim)
+                    label: modelData.label
+                    unit: modelData.unit ? modelData.unit : ""
+                    decimals: modelData.decimals
+                    minimum: lim ? lim[0] : 0
+                    maximum: lim ? lim[1] : 1
+                    step: modelData.step
+                    value: root.lighting && root.lighting.ripple
+                      ? root.lighting.ripple[modelData.key] : 0
+                    foreground: root.foreground
+                    onCommitted: function (v) {
+                      var patch = {}
+                      patch[modelData.key] = v
+                      root.send("/api/ripple", patch)
+                    }
+                  }
+                }
+
+                Text {
+                  visible: !!root.light && root.light.mode === "ripple"
+                  width: parent.width
+                  wrapMode: Text.WordWrap
+                  text: "Brightness follows the keyboard's own level, so the Fn "
+                    + "brightness keys scale the ripple with it."
+                  color: root.dim
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
+                }
+
+                Text {
+                  visible: !!root.light && root.light.mode === "ripple"
+                  width: parent.width
+                  wrapMode: Text.WordWrap
+                  text: "The ripple reads key events to know where each wave starts. "
+                    + "Only the key position is used."
+                  color: root.dim
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
+                }
+
+                // ---------------- numpad ----------------
+              }
+              // --- Trackpad numpad ---
+              Column {
+                width: parent.width
+                spacing: Style.spacing.md
+                visible: root.matches("Trackpad numpad numpad trackpad touchpad keypad numbers numlock")
+                PanelSeparator { width: parent.width; visible: !!(root.numpad && root.numpad.supported) }
+                SectionTitle {
+                  text: "Trackpad numpad"
+                  info: root.tipNumpad
+                  host: root
+                  foreground: root.foreground
+                  visible: !!(root.numpad && root.numpad.supported)
+                }
+
+                RadioGroup {
+                  width: parent.width
+                  visible: !!(root.numpad && root.numpad.supported)
+                  options: [
+                    { value: "on", text: "Lit", description: "no need for the corner gesture" },
+                    { value: "off", text: "Dark" }
+                  ]
+                  current: root.numpad && root.numpad.enabled ? "on" : "off"
+                  foreground: root.foreground
+                  onPicked: function (v) { root.send("/api/numpad", { enabled: v === "on" }) }
+                }
+
+                LabelledSlider {
+                  width: parent.width
+                  visible: !!(root.numpad && root.numpad.supported)
+                  label: "Auto-off after idle"
+                  hint: "0 disables it"
+                  unit: " s"
+                  minimum: 0; maximum: 120; step: 10
+                  value: root.numpad ? Number(root.numpad.inactivity_timeout) : 120
+                  foreground: root.foreground
+                  onCommitted: function (v) {
+                    root.send("/api/numpad", { disable_due_inactivity_time: Math.round(v) })
+                  }
+                }
+
+                // ---------------- system ----------------
+              }
+              // --- System ---
+              Column {
+                width: parent.width
+                spacing: Style.spacing.md
+                visible: root.matches("System panel overdrive auto brightness boot sound chime display system")
+                PanelSeparator { width: parent.width }
+                SectionTitle { text: "System"; info: root.tipSystem; host: root; foreground: root.foreground }
+
+                Repeater {
+                  model: [
+                    { name: "panel_overdrive", label: "Panel overdrive",
+                      labels: { 0: "off", 1: "on — faster pixels" } },
+                    { name: "screen_auto_brightness", label: "Auto brightness",
+                      labels: { 0: "off", 1: "on" } },
+                    { name: "boot_sound", label: "Boot sound",
+                      labels: { 0: "silent", 1: "ROG chime" } }
+                  ]
+
+                  RadioGroup {
+                    required property var modelData
+                    readonly property var a: modelData ? root.attr(modelData.name) : null
+                    width: rightColumn.width
+                    visible: !!a
+                    label: modelData.label
+                    options: root.enumOptions(a, modelData.labels)
+                    current: a ? a.current : null
+                    foreground: root.foreground
+                    onPicked: function (v) {
+                      root.send("/api/attribute", { name: modelData.name, value: v })
+              }
                   }
                 }
               }
@@ -929,7 +1088,7 @@ Item {
           anchors.left: parent.left
           anchors.right: parent.right
           anchors.bottom: parent.bottom
-          text: "Esc closes · drag a slider to change it"
+          text: "Type to filter · Esc clears, then closes · drag a slider to change it"
           color: Qt.darker(root.foreground, 1.9)
           font.family: Style.font.family
           font.pixelSize: Style.font.caption * 0.9
