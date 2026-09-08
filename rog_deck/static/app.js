@@ -533,6 +533,57 @@ function renderAura() {
     "asusctl cannot read the active effect back, so the highlighted effect is what this page last applied."));
 }
 
+function renderRipple() {
+  const host = $("#ripple");
+  host.textContent = "";
+  const r = STATE.ripple;
+  if (!r) return;
+  if (!r.supported) {
+    host.append(el("div", "note info",
+      "this keyboard is not per-key addressable, so the ripple cannot run"));
+    return;
+  }
+  if (!r.installed) {
+    host.append(el("div", "note info",
+      "the ripple unit is not installed; run rog-deck/install.sh"));
+    return;
+  }
+
+  const s = r.settings;
+  const push = (patch, message) => act(
+    () => api("/api/ripple", patch), message);
+
+  host.append(checkRow("running now", r.active,
+    (on) => push({ active: on }, on ? "ripple started" : "ripple stopped")));
+  host.append(checkRow("start at login", r.enabled,
+    (on) => push({ enabled: on }, on ? "enabled at login" : "disabled at login")));
+
+  const swatch = el("input");
+  swatch.type = "color";
+  swatch.value = s.colour;
+  swatch.addEventListener("change", () => push({ colour: swatch.value }, "glow colour set"));
+  host.append(labelled("glow colour", null, swatch));
+
+  const lim = r.limits || {};
+  const range = (key, label, sub, unit, step) => {
+    const [lo, hi] = lim[key] || [0, 1];
+    host.append(sliderField({
+      label, sub, value: s[key], min: lo, max: hi, step,
+      unit: unit || "",
+      onCommit: (value) => push({ [key]: value }, `${label} → ${value}${unit || ""}`),
+    }));
+  };
+  range("brightness", "max brightness", "ceiling for the whole effect", "", 0.05);
+  range("speed", "wave speed", "how fast the front travels", "", 0.5);
+  range("decay", "fade time", "seconds for a lit key to go dark", " s", 0.05);
+  range("base", "idle glow", "brightness when nothing is happening", "", 0.01);
+  range("steps", "trail bands", "0 = smooth fade, or N stepped rings", "", 1);
+
+  host.append(el("div", "note info",
+    "Changes apply live \u2014 the running effect re-reads its settings. It reads key "
+    + "events to know where each wave starts; only the key position is used."));
+}
+
 function renderSlash() {
   const host = $("#slash");
   host.textContent = "";
@@ -634,6 +685,7 @@ function render() {
   renderAttributes();
   renderBattery();
   renderAura();
+  renderRipple();
   renderSlash();
   renderGraphics();
   renderNumpad();

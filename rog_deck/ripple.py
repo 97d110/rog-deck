@@ -24,6 +24,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 
+from . import ripple_config
 from .keyboard_layout import (KEYCODE_TO_KEY, Led, load_leds,
                               typing_keyboards)
 
@@ -41,20 +42,21 @@ class Ripple:
     x: float
     y: float
     born: float
-    hue_shift: float = 0.0
+    # LED indices this wavefront has already lit. A key is latched once, then
+    # decays; without this it would be re-lit by every ring that swept over
+    # it, which is what made the original version flicker.
+    crossed: set[int] = field(default_factory=set)
 
 
 @dataclass
 class Settings:
-    rings: int = 4
-    speed: float = 9.0          # key-units per second
-    spacing: float = 1.15       # gap between rings, key-units
-    thickness: float = 0.62     # half-width of a ring band
-    fade: float = 1.30          # seconds for a ripple to fade out
+    speed: float = 9.0          # wavefront speed, key-units per second
+    decay: float = 0.45         # seconds for a key to fade to ~37%
+    steps: int = 0              # 0 = smooth; N = quantise the trail into N levels
     fps: float = 30.0
     colour: tuple[int, int, int] = (60, 170, 255)
+    brightness: float = 1.0     # ceiling applied to the whole effect, 0..1
     base: float = 0.02          # faint idle glow so the board is not black
-    ring_levels: tuple[float, ...] = (1.0, 0.55, 0.3, 0.15)
 
 
 def build_packets() -> list[bytearray]:
@@ -118,66 +120,95 @@ class AuraWriter:
 
 
 class RippleEngine:
+    """Latch-and-decay ripples.
+
+    The wavefront expands at `speed`; the first time it reaches a key that key
+    is latched to full brightness, and from then on it only decays. That gives
+    each key one clean rise and a smooth fade.
+
+    The earlier version instead lit a key whenever it fell inside one of four
+    expanding ring bands. Because the bands are separated by gaps, a single
+    key was lit, dimmed, lit again and dimmed again as the rings swept past -
+    measured as brightness rising 8 separate times on one keypress, which read
+    as flicker. The multi-level "rings" look survives here as a *spatial*
+    gradient: keys further out were latched later, so they are brighter than
+    the ones behind them.
+    """
+
     def __init__(self, leds: list[Led], width: float, height: float,
                  settings: Settings) -> None:
         self.leds = leds
         self.settings = settings
         self.ripples: list[Ripple] = []
-        # A ripple is done once its trailing ring has left the board.
-        self.reach = math.hypot(width, height) + settings.rings * settings.spacing
-        self.max_age = self.reach / settings.speed + settings.fade
+        self.levels = [0.0] * len(leds)
+        self.reach = math.hypot(width, height)
+        self.max_age = self.reach / settings.speed
+        self._last = time.monotonic()
+        # Distances are recomputed per ripple, but the LED coordinates are
+        # fixed, so keep them in flat lists for a tighter inner loop.
+        self._xs = [l.x for l in leds]
+        self._ys = [l.y for l in leds]
 
     def spawn(self, key: str) -> None:
         hits = [l for l in self.leds if l.key == key]
         if not hits:
             return
-        # Wide keys have several LEDs; start from their midpoint.
         x = sum(l.x for l in hits) / len(hits)
         y = sum(l.y for l in hits) / len(hits)
         self.ripples.append(Ripple(x=x, y=y, born=time.monotonic()))
 
-    def intensity(self, led: Led, now: float) -> float:
+    def _advance(self, now: float) -> None:
         s = self.settings
-        best = s.base
+        dt = max(0.0, now - self._last)
+        self._last = now
+
+        # Exponential decay: every key heads toward zero at the same rate, so
+        # brightness is monotonic once latched.
+        if dt > 0 and s.decay > 0:
+            factor = math.exp(-dt / s.decay)
+            for i, level in enumerate(self.levels):
+                if level > 0.0:
+                    self.levels[i] = level * factor if level * factor > 0.004 else 0.0
+
+        alive = []
         for ripple in self.ripples:
-            age = now - ripple.born
-            radius = age * s.speed
-            distance = math.hypot(led.x - ripple.x, led.y - ripple.y)
+            radius = (now - ripple.born) * s.speed
+            crossed = ripple.crossed
+            for i in range(len(self.leds)):
+                if i in crossed:
+                    continue
+                dx = self._xs[i] - ripple.x
+                dy = self._ys[i] - ripple.y
+                if dx * dx + dy * dy <= radius * radius:
+                    crossed.add(i)
+                    self.levels[i] = 1.0
+            # Retire once the front has left the board, or lit everything.
+            if radius <= self.reach and len(crossed) < len(self.leds):
+                alive.append(ripple)
+        self.ripples = alive
 
-            # Envelope: ripples ease out over the last `fade` seconds of life.
-            remaining = self.max_age - age
-            envelope = 1.0 if remaining > s.fade else max(0.0, remaining / s.fade)
-            if envelope <= 0.0:
-                continue
-
-            for index in range(s.rings):
-                centre = radius - index * s.spacing
-                if centre < 0:
-                    break
-                if abs(distance - centre) <= s.thickness:
-                    level = s.ring_levels[min(index, len(s.ring_levels) - 1)]
-                    # Soften the band edges so rings look round, not blocky.
-                    edge = 1.0 - (abs(distance - centre) / s.thickness) ** 2
-                    best = max(best, level * edge * envelope)
-        return min(1.0, best)
+    def _shape(self, level: float) -> float:
+        s = self.settings
+        if s.steps > 0 and level > 0.0:
+            # Quantise the trail into N visible bands - the "4 level rings"
+            # look, but monotonic, so it steps down instead of flickering.
+            level = math.ceil(level * s.steps) / s.steps
+        return min(1.0, max(s.base, level) * s.brightness)
 
     def render(self, packets: list[bytearray]) -> bool:
-        now = time.monotonic()
-        self.ripples = [r for r in self.ripples if now - r.born < self.max_age]
-
+        self._advance(time.monotonic())
         r0, g0, b0 = self.settings.colour
-        lit = False
-        for led in self.leds:
-            value = self.intensity(led, now)
-            if value > self.settings.base:
-                lit = True
-            base = led.packet
+        active = bool(self.ripples)
+        for index, led in enumerate(self.leds):
+            value = self._shape(self.levels[index])
+            if self.levels[index] > 0.0:
+                active = True
             off = led.offset
-            packets[base][off] = int(r0 * value)
-            packets[base][off + 1] = int(g0 * value)
-            packets[base][off + 2] = int(b0 * value)
-        return lit or bool(self.ripples)
-
+            packet = packets[led.packet]
+            packet[off] = int(r0 * value)
+            packet[off + 1] = int(g0 * value)
+            packet[off + 2] = int(b0 * value)
+        return active
 
 def open_keyboards() -> list[tuple[int, str]]:
     """Every readable input device that reports keyboard keys."""
@@ -216,6 +247,18 @@ def run(settings: Settings, dry_run: bool = False, ensure_brightness: bool = Tru
               "board and rog-control-center's layout files).", file=sys.stderr)
         return 1
     print(f"{len(leds)} LEDs, board {width:.1f}x{height:.1f} key-units")
+
+    def apply_stored(target: Settings) -> None:
+        stored = ripple_config.load()
+        target.colour = ripple_config.rgb(stored["colour"])
+        target.brightness = stored["brightness"]
+        target.speed = stored["speed"]
+        target.decay = stored["decay"]
+        target.steps = stored["steps"]
+        target.base = stored["base"]
+
+    apply_stored(settings)
+    config_seen = ripple_config.mtime()
 
     engine = RippleEngine(leds, width, height, settings)
     packets = build_packets()
@@ -261,6 +304,15 @@ def run(settings: Settings, dry_run: bool = False, ensure_brightness: bool = Tru
     try:
         while True:
             start = time.monotonic()
+
+            # Cheap stat(); lets either UI recolour the effect live.
+            stamp = ripple_config.mtime()
+            if stamp != config_seen:
+                config_seen = stamp
+                apply_stored(settings)
+                engine.max_age = engine.reach / max(0.1, settings.speed)
+                print(f"settings reloaded: colour={settings.colour} "
+                      f"brightness={settings.brightness}", flush=True)
             for fd, _ in poller.poll(0):
                 try:
                     data = os.read(fd, EVENT_SIZE * 64)
@@ -312,14 +364,17 @@ def run(settings: Settings, dry_run: bool = False, ensure_brightness: bool = Tru
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="rog-deck-ripple",
                                 description="Reactive per-key ripple effect")
-    p.add_argument("--speed", type=float, default=9.0, help="ring speed, key-units/sec")
-    p.add_argument("--rings", type=int, default=4, help="number of rings")
-    p.add_argument("--spacing", type=float, default=1.15, help="gap between rings")
-    p.add_argument("--thickness", type=float, default=0.62, help="ring half-width")
-    p.add_argument("--fade", type=float, default=1.3, help="fade-out seconds")
+    p.add_argument("--speed", type=float, default=9.0,
+                   help="wavefront speed, key-units/sec")
+    p.add_argument("--decay", type=float, default=0.45,
+                   help="seconds for a lit key to fade")
+    p.add_argument("--steps", type=int, default=0,
+                   help="quantise the trail into N brightness bands (0 = smooth)")
     p.add_argument("--fps", type=float, default=30.0,
-               help="frames/sec; ~30 is the EC ceiling")
+                   help="frames/sec; ~30 is the EC ceiling")
     p.add_argument("--colour", default="3caaff", help="RRGGBB")
+    p.add_argument("--brightness", type=float, default=1.0,
+                   help="overall ceiling, 0..1")
     p.add_argument("--base", type=float, default=0.02, help="idle glow 0..1")
     p.add_argument("--dry-run", action="store_true",
                    help="compute frames without touching the keyboard")
@@ -328,9 +383,20 @@ def main(argv: list[str] | None = None) -> int:
     raw = args.colour.lstrip("#")
     colour = tuple(int(raw[i:i + 2], 16) for i in (0, 2, 4))
 
-    settings = Settings(rings=args.rings, speed=args.speed, spacing=args.spacing,
-                        thickness=args.thickness, fade=args.fade, fps=args.fps,
-                        colour=colour, base=args.base)
+    settings = Settings(speed=args.speed, decay=args.decay, steps=args.steps,
+                        fps=args.fps, colour=colour,
+                        brightness=args.brightness, base=args.base)
+
+    # An explicit flag is a deliberate one-off, so persist it as the new
+    # stored value rather than having the file immediately overwrite it.
+    given = {}
+    for name in ("speed", "decay", "steps", "brightness", "base"):
+        if getattr(args, name) != p.get_default(name):
+            given[name] = getattr(args, name)
+    if args.colour != p.get_default("colour"):
+        given["colour"] = args.colour
+    if given:
+        ripple_config.save(given)
     return run(settings, dry_run=args.dry_run)
 
 

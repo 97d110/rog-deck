@@ -19,7 +19,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 
-from . import __version__, asus, sensors, theme as theme_mod
+from . import __version__, asus, ripple_config, sensors, theme as theme_mod
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
@@ -114,6 +114,7 @@ def state(_: dict[str, Any]) -> dict[str, Any]:
         "slash": asus.slash(),
         "graphics": asus.graphics(),
         "numpad": asus.numpad(),
+        "ripple": _ripple_state(),
         "fan_curves": _fan_curves_for(profile.get("current")),
     }
 
@@ -141,6 +142,66 @@ def _fan_curves_for(profile: str | None) -> dict[str, Any]:
                 "curves": asus.fan_curves(profile.capitalize())}
     except asus.CommandError as exc:
         return {"available": False, "reason": str(exc)}
+
+
+RIPPLE_UNIT = "rog-deck-ripple.service"
+
+
+def _ripple_state() -> dict[str, Any]:
+    """Stored effect settings plus whether the effect is currently running."""
+    def unit(*args: str) -> str:
+        try:
+            return asus.run("systemctl", "--user", *args, RIPPLE_UNIT)
+        except asus.CommandError:
+            # systemctl exits non-zero for inactive/disabled, which is an
+            # answer rather than a failure.
+            return ""
+
+    installed = bool(unit("cat")) or bool(unit("is-enabled"))
+    return {
+        "supported": bool(_per_key_supported()),
+        "installed": installed,
+        "active": unit("is-active") == "active",
+        "enabled": unit("is-enabled") == "enabled",
+        "settings": ripple_config.load(),
+        "limits": ripple_config.LIMITS,
+    }
+
+
+def _per_key_supported() -> bool:
+    from .keyboard_layout import board_name, layout_for_board
+    _, advanced = layout_for_board(board_name())
+    return advanced == "PerKey"
+
+
+@get("/api/ripple")
+def ripple_now(_: dict[str, Any]) -> dict[str, Any]:
+    return _ripple_state()
+
+
+@post("/api/ripple")
+def set_ripple(body: dict[str, Any]) -> dict[str, Any]:
+    # Settings are written first so a start picks them up immediately.
+    settings = {k: v for k, v in body.items() if k in ripple_config.DEFAULTS}
+    if settings:
+        ripple_config.save(settings)
+
+    if "active" in body:
+        action = "start" if body["active"] else "stop"
+        try:
+            asus.run("systemctl", "--user", action, RIPPLE_UNIT)
+        except asus.CommandError as exc:
+            raise asus.CommandError(
+                f"could not {action} the ripple effect: {exc}") from exc
+
+    if "enabled" in body:
+        action = "enable" if body["enabled"] else "disable"
+        try:
+            asus.run("systemctl", "--user", action, RIPPLE_UNIT)
+        except asus.CommandError as exc:
+            raise asus.CommandError(f"could not {action} at login: {exc}") from exc
+
+    return {"ripple": _ripple_state()}
 
 
 @get("/api/theme")
