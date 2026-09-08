@@ -41,7 +41,6 @@ Item {
   readonly property var attrs: deck && deck.attributes ? deck.attributes : []
   readonly property var profileInfo: deck && deck.profile ? deck.profile : null
   readonly property var battery: deck && deck.battery ? deck.battery : null
-  readonly property var slash: deck && deck.slash ? deck.slash : null
   readonly property var graphics: deck && deck.graphics ? deck.graphics : null
   readonly property var numpad: deck && deck.numpad ? deck.numpad : null
   readonly property var lighting: deck && deck.lighting ? deck.lighting : null
@@ -51,8 +50,11 @@ Item {
   readonly property var cpu: Api.warmestCpu(snapshot)
   readonly property var dgpu: snapshot && snapshot.dgpu ? snapshot.dgpu : null
 
+  // Saturated hues: the keyboard LEDs are full RGB, and the previous set
+  // borrowed muted UI colours that looked washed out on the board.
   readonly property var swatches: [
-    "#3caaff", "#98c379", "#e5c07b", "#ff2d55", "#c678dd", "#ffffff"
+    "#ff0000", "#ff6a00", "#ffd400", "#00ff3c",
+    "#00e5ff", "#0066ff", "#c400ff", "#ffffff"
   ]
 
   function attr(name) {
@@ -349,6 +351,8 @@ Item {
                   maximum: a ? a.max : 1
                   step: a && a.step ? a.step : 1
                   value: a ? a.current : 0
+                  recommended: a && a.default !== null && a.default !== undefined
+                    ? a.default : NaN
                   foreground: root.foreground
                   onCommitted: function (v) {
                     root.send("/api/attribute", { name: modelData.name, value: Math.round(v) })
@@ -416,6 +420,8 @@ Item {
                   maximum: a ? a.max : 1
                   step: a && a.step ? a.step : 1
                   value: a ? a.current : 0
+                  recommended: a && a.default !== null && a.default !== undefined
+                    ? a.default : NaN
                   foreground: root.foreground
                   onCommitted: function (v) {
                     root.send("/api/attribute", { name: modelData.name, value: Math.round(v) })
@@ -561,7 +567,10 @@ Item {
                 width: parent.width
                 visible: !!root.light && root.light.mode !== "off"
                 label: "Brightness"
-                options: root.textOptions(root.lighting ? root.lighting.brightness_choices : [])
+                hint: "the keyboard's own Fn keys change this too"
+                options: root.textOptions(
+                  (root.lighting ? root.lighting.brightness_choices : [])
+                    .filter(function (b) { return b !== "off" }))
                 current: root.light ? root.light.brightness : null
                 foreground: root.foreground
                 onPicked: function (v) { root.sendLight({ brightness: v }) }
@@ -645,10 +654,8 @@ Item {
 
               Repeater {
                 model: [
-                  { key: "brightness", label: "Max brightness", step: 0.05, decimals: 2 },
                   { key: "speed", label: "Wave speed", step: 0.5, decimals: 1 },
-                  { key: "decay", label: "Fade time", step: 0.05, decimals: 2, unit: " s" },
-                  { key: "steps", label: "Trail bands", step: 1, decimals: 0, hint: "0 = smooth" }
+                  { key: "decay", label: "Fade time", step: 0.05, decimals: 2, unit: " s" }
                 ]
 
                 LabelledSlider {
@@ -659,7 +666,6 @@ Item {
                   width: rightColumn.width
                   visible: !!(root.light && root.light.mode === "ripple" && lim)
                   label: modelData.label
-                  hint: modelData.hint ? modelData.hint : ""
                   unit: modelData.unit ? modelData.unit : ""
                   decimals: modelData.decimals
                   minimum: lim ? lim[0] : 0
@@ -680,59 +686,22 @@ Item {
                 visible: !!root.light && root.light.mode === "ripple"
                 width: parent.width
                 wrapMode: Text.WordWrap
-                text: "The ripple reads key events to know where each wave starts. "
-                  + "Only the key position is used."
+                text: "Brightness follows the keyboard's own level, so the Fn "
+                  + "brightness keys scale the ripple with it."
                 color: root.dim
                 font.family: Style.font.family
                 font.pixelSize: Style.font.caption
               }
 
-              // ---------------- lid light bar ----------------
-              PanelSeparator { width: parent.width; visible: !!(root.slash && root.slash.supported) }
-              PanelSectionHeader {
-                text: "Lid light bar"
-                foreground: root.foreground
-                visible: !!(root.slash && root.slash.supported)
-              }
-
-              Row {
+              Text {
+                visible: !!root.light && root.light.mode === "ripple"
                 width: parent.width
-                spacing: Style.spacing.sm
-                visible: !!(root.slash && root.slash.supported)
-
-                Button {
-                  text: "Turn on"
-                  bordered: true
-                  foreground: root.foreground
-                  onClicked: root.send("/api/slash", { enabled: true })
-                }
-                Button {
-                  text: "Turn off"
-                  bordered: true
-                  foreground: root.foreground
-                  onClicked: root.send("/api/slash", { enabled: false })
-                }
-              }
-
-              RadioGroup {
-                width: parent.width
-                visible: !!(root.slash && root.slash.supported)
-                label: "Animation"
-                hint: "asusctl cannot read this back, so picking one sends it"
-                options: root.textOptions(root.slash ? root.slash.modes : [])
-                current: null
-                foreground: root.foreground
-                onPicked: function (v) { root.send("/api/slash", { mode: v }) }
-              }
-
-              LabelledSlider {
-                width: parent.width
-                visible: !!(root.slash && root.slash.supported)
-                label: "Light bar brightness"
-                minimum: 0; maximum: 255; step: 5
-                value: 128
-                foreground: root.foreground
-                onCommitted: function (v) { root.send("/api/slash", { brightness: Math.round(v) }) }
+                wrapMode: Text.WordWrap
+                text: "The ripple reads key events to know where each wave starts. "
+                  + "Only the key position is used."
+                color: root.dim
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
               }
 
               // ---------------- numpad ----------------

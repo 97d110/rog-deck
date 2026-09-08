@@ -263,15 +263,35 @@ AURA_EFFECT_ARGS: dict[str, tuple[str, ...]] = {
 AURA_EFFECTS = list(AURA_EFFECT_ARGS)
 
 
+KBD_BACKLIGHT = "/sys/class/leds/asus::kbd_backlight"
+
+
+def keyboard_brightness() -> str | None:
+    """Backlight level as off/low/med/high, straight from the LED class.
+
+    Read from sysfs rather than `asusctl leds get`, which reports "Off" while
+    another client streams direct frames (asusd will not hand over the aura
+    lock) and does not reflect changes made with the keyboard's own Fn keys
+    promptly. sysfs is authoritative and needs no lock.
+    """
+    level = _read_int(f"{KBD_BACKLIGHT}/brightness")
+    top = _read_int(f"{KBD_BACKLIGHT}/max_brightness")
+    if level is None or not top:
+        return None
+    index = round(level / top * (len(AURA_BRIGHTNESS) - 1))
+    return AURA_BRIGHTNESS[max(0, min(len(AURA_BRIGHTNESS) - 1, index))]
+
+
 def aura() -> dict[str, Any]:
-    brightness = None
-    try:
-        out = run("asusctl", "leds", "get")
-        match = re.search(r":\s*(\w+)", out)
-        if match:
-            brightness = match.group(1).lower()
-    except CommandError:
-        pass
+    brightness = keyboard_brightness()
+    if brightness is None:
+        try:
+            out = run("asusctl", "leds", "get")
+            match = re.search(r":\s*(\w+)", out)
+            if match:
+                brightness = match.group(1).lower()
+        except CommandError:
+            pass
     return {
         "brightness": brightness,
         "brightness_choices": AURA_BRIGHTNESS,

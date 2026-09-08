@@ -25,8 +25,8 @@ import time
 from dataclasses import dataclass, field
 
 from . import ripple_config
-from .keyboard_layout import (KEYCODE_TO_KEY, Led, load_leds,
-                              typing_keyboards)
+from .keyboard_layout import (BTN_LEFT, KEYCODE_TO_KEY, Led, load_leds,
+                              touchpads, typing_keyboards)
 
 # struct input_event: timeval (2x long) + type + code + value
 EVENT_FORMAT = "llHHi"
@@ -35,6 +35,25 @@ EV_KEY = 0x01
 
 PACKET_COUNT = 11
 PACKET_SIZE = 64
+
+# The keyboard's own brightness level, which the Fn keys change. Using it as
+# the effect's ceiling means the hardware shortcuts control the ripple too,
+# instead of the app keeping a second, competing brightness.
+BACKLIGHT = "/sys/class/leds/asus::kbd_backlight"
+
+
+def hardware_brightness() -> float | None:
+    """Backlight level as 0..1, or None when it cannot be read."""
+    try:
+        with open(f"{BACKLIGHT}/brightness") as fh:
+            level = int(fh.read().strip())
+        with open(f"{BACKLIGHT}/max_brightness") as fh:
+            top = int(fh.read().strip())
+    except (OSError, ValueError):
+        return None
+    if top <= 0:
+        return None
+    return max(0.0, min(1.0, level / top))
 
 
 @dataclass
@@ -56,7 +75,13 @@ class Settings:
     fps: float = 30.0
     colour: tuple[int, int, int] = (60, 170, 255)
     brightness: float = 1.0     # ceiling applied to the whole effect, 0..1
-    base: float = 0.02          # faint idle glow so the board is not black
+    # No idle glow by default: a permanent floor meant every key sat faintly
+    # lit forever, which read as "some keys are stuck on".
+    base: float = 0.0
+    # The underside bar is one wide zone per side, so treating it like a key
+    # makes it strobe on every keystroke. It holds instead, and only starts
+    # fading once the keys have gone dark.
+    lightbar_decay: float = 0.9
 
 
 def build_packets() -> list[bytearray]:
@@ -141,6 +166,9 @@ class RippleEngine:
         self.settings = settings
         self.ripples: list[Ripple] = []
         self.levels = [0.0] * len(leds)
+        self.is_bar = [led.kind == "lightbar" for led in leds]
+        self.key_indices = [i for i, bar in enumerate(self.is_bar) if not bar]
+        self.bar_indices = [i for i, bar in enumerate(self.is_bar) if bar]
         self.reach = math.hypot(width, height)
         self.max_age = self.reach / settings.speed
         self._last = time.monotonic()
@@ -166,9 +194,22 @@ class RippleEngine:
         # brightness is monotonic once latched.
         if dt > 0 and s.decay > 0:
             factor = math.exp(-dt / s.decay)
-            for i, level in enumerate(self.levels):
+            for i in self.key_indices:
+                level = self.levels[i]
                 if level > 0.0:
                     self.levels[i] = level * factor if level * factor > 0.004 else 0.0
+
+            # Hold the bar while any key is still lit, so it does not stutter
+            # along with individual keystrokes; fade it only once the board is
+            # dark, and more slowly than the keys.
+            keys_lit = any(self.levels[i] > 0.02 for i in self.key_indices)
+            if not keys_lit and s.lightbar_decay > 0:
+                bar_factor = math.exp(-dt / s.lightbar_decay)
+                for i in self.bar_indices:
+                    level = self.levels[i]
+                    if level > 0.0:
+                        self.levels[i] = (level * bar_factor
+                                          if level * bar_factor > 0.004 else 0.0)
 
         alive = []
         for ripple in self.ripples:
@@ -251,7 +292,12 @@ def run(settings: Settings, dry_run: bool = False, ensure_brightness: bool = Tru
     def apply_stored(target: Settings) -> None:
         stored = ripple_config.load()
         target.colour = ripple_config.rgb(stored["colour"])
-        target.brightness = stored["brightness"]
+        # The keyboard's own level drives the effect, so the Fn brightness
+        # keys scale it. A level of 0 is not used as a ceiling, though: on
+        # boards where the backlight cannot be raised by software that would
+        # render the effect permanently invisible with nothing to show why.
+        level = hardware_brightness()
+        target.brightness = level if level else stored["brightness"]
         target.speed = stored["speed"]
         target.decay = stored["decay"]
         target.steps = stored["steps"]
@@ -281,7 +327,8 @@ def run(settings: Settings, dry_run: bool = False, ensure_brightness: bool = Tru
             except Exception:
                 print("could not raise brightness; run: asusctl leds set med")
 
-    wanted = set(typing_keyboards())
+    pads = set(touchpads())
+    wanted = set(typing_keyboards()) | pads
     devices = [(fd, path) for fd, path in open_keyboards() if path in wanted]
     # Close anything we opened but will not read.
     for fd, path in open_keyboards():
@@ -292,6 +339,9 @@ def run(settings: Settings, dry_run: bool = False, ensure_brightness: bool = Tru
               file=sys.stderr)
         return 1
     print("reading: " + ", ".join(p for _, p in devices))
+    if pads:
+        print("trackpad clicks ripple from the spacebar: " + ", ".join(sorted(pads)))
+    pad_fds = {fd for fd, path in devices if path in pads}
 
     _install_signal_handlers()
 
@@ -307,7 +357,9 @@ def run(settings: Settings, dry_run: bool = False, ensure_brightness: bool = Tru
 
             # Cheap stat(); lets either UI recolour the effect live.
             stamp = ripple_config.mtime()
-            if stamp != config_seen:
+            level = hardware_brightness()
+            if stamp != config_seen or (level
+                                        and abs(level - settings.brightness) > 0.001):
                 config_seen = stamp
                 apply_stored(settings)
                 engine.max_age = engine.reach / max(0.1, settings.speed)
@@ -318,14 +370,20 @@ def run(settings: Settings, dry_run: bool = False, ensure_brightness: bool = Tru
                     data = os.read(fd, EVENT_SIZE * 64)
                 except OSError:
                     continue
+                is_pad = fd in pad_fds
                 for chunk in range(0, len(data) - EVENT_SIZE + 1, EVENT_SIZE):
                     _, _, etype, code, value = struct.unpack_from(
                         EVENT_FORMAT, data, chunk)
                     # Only key-down, and only the position is used.
-                    if etype == EV_KEY and value == 1:
-                        key = KEYCODE_TO_KEY.get(code)
-                        if key:
-                            engine.spawn(key)
+                    if etype != EV_KEY or value != 1:
+                        continue
+                    if is_pad:
+                        if code == BTN_LEFT:
+                            engine.spawn("Spacebar")
+                        continue
+                    key = KEYCODE_TO_KEY.get(code)
+                    if key:
+                        engine.spawn(key)
 
             active = engine.render(packets)
             if active:

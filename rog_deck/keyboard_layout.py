@@ -15,6 +15,20 @@ from dataclasses import dataclass
 
 from .led_table import LED_OFFSETS
 
+# The LedCode enum has no lightbar entries; the underside bar is addressed by
+# four "zoned" offsets in packet 0. Two of them share bytes with VolDown and
+# VolUp, which is why a ripple previously lit only part of the bar - as a side
+# effect of those keys rather than on purpose. Claiming all four here (and
+# dropping the two volume keys, which share the bytes and are far less
+# visible) gives the bar its full width.
+LIGHTBAR_OFFSETS = [
+    ("LightbarFarLeft", (0, 9)),
+    ("LightbarLeft", (0, 12)),
+    ("LightbarRight", (0, 15)),
+    ("LightbarFarRight", (0, 18)),
+]
+LIGHTBAR_CONFLICTS = {"VolDown", "VolUp"}
+
 AURA_SUPPORT = "/usr/share/asusd/aura_support.ron"
 LAYOUT_DIRS = ["/usr/share/rog-gui/layouts", "/usr/share/asusd/layouts"]
 
@@ -31,6 +45,7 @@ class Led:
     offset: int
     x: float
     y: float
+    kind: str = "key"   # "key" or "lightbar"
 
 
 def board_name() -> str:
@@ -127,6 +142,8 @@ def load_leds() -> tuple[list[Led], float, float]:
                     frac = (i + 0.5) / count
                     led_x = x + advance * frac
                     name = key if count == 1 else f"{key}{count}_{i + 1}"
+                    if key in LIGHTBAR_CONFLICTS:
+                        continue
                     where = LED_OFFSETS.get(name)
                     if where is None and count > 1:
                         where = LED_OFFSETS.get(key)
@@ -139,9 +156,34 @@ def load_leds() -> tuple[list[Led], float, float]:
             x += advance
         y += row_height
 
+    # Some layout rows claim more LEDs than the hardware has: the three
+    # LShift entries share one byte, and PrtSc appears twice. Writing the same
+    # byte repeatedly just means last-one-wins, so keep the first of each.
+    unique: list[Led] = []
+    claimed: set[tuple[int, int]] = set()
+    for led in leds:
+        key = (led.packet, led.offset)
+        if key in claimed:
+            continue
+        claimed.add(key)
+        unique.append(led)
+    leds = unique
+
     width = max((l.x for l in leds), default=0.0)
     height = max((l.y for l in leds), default=0.0)
-    return leds, width, height
+
+    # Spread the bar evenly across the full keyboard width, just below it, so
+    # a wave crossing the board sweeps the whole bar rather than one end.
+    count = len(LIGHTBAR_OFFSETS)
+    for index, (name, where) in enumerate(LIGHTBAR_OFFSETS):
+        leds.append(Led(
+            name=name, key=name, packet=where[0], offset=where[1],
+            x=round(width * (index + 0.5) / count, 3),
+            y=round(height + 1.0, 3),
+            kind="lightbar",
+        ))
+
+    return leds, width, height + 1.0
 
 
 # --- evdev keycode -> logical key ------------------------------------------
@@ -202,6 +244,41 @@ def typing_keyboards() -> list[str]:
         if not handlers or not keymask:
             continue
         if not all(keymask >> code & 1 for code in _REQUIRED_KEYS):
+            continue
+        for token in handlers.split():
+            if token.startswith("event"):
+                paths.append(f"/dev/input/{token}")
+                break
+    return paths
+
+
+# Trackpad clicks make a good extra ripple source, and the natural origin is
+# the spacebar - it is the key your thumbs sit above. Restricted to touchpads
+# by name so an external mouse does not fire waves.
+BTN_LEFT = 0x110
+
+
+def touchpads() -> list[str]:
+    """Event device paths for touchpads that report a left button."""
+    try:
+        blocks = open("/proc/bus/input/devices").read().split("\n\n")
+    except OSError:
+        return []
+
+    paths = []
+    for block in blocks:
+        name = handlers = ""
+        keymask = 0
+        for line in block.splitlines():
+            if line.startswith("N: Name="):
+                name = line.split("=", 1)[1].strip().strip('"')
+            elif line.startswith("H: Handlers="):
+                handlers = line.split("=", 1)[1]
+            elif line.startswith("B: KEY="):
+                keymask = _key_bitmask(line.split("=", 1)[1].split())
+        if "touchpad" not in name.lower():
+            continue
+        if not (keymask >> BTN_LEFT) & 1:
             continue
         for token in handlers.split():
             if token.startswith("event"):

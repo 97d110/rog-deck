@@ -20,6 +20,9 @@ Item {
   property color accent: Color.accent
   property real liveValue: value
   property bool dragging: false
+  // The firmware's own default for the active profile. Marked on the track so
+  // "what should this be?" has an answer without leaving the app.
+  property real recommended: NaN
 
   signal moved(real value)
   signal released(real value)
@@ -51,6 +54,19 @@ Item {
       radius: parent.radius
       color: root.accent
     }
+  }
+
+  // Recommended-value tick, drawn under the knob.
+  Rectangle {
+    visible: !isNaN(root.recommended)
+      && root.recommended >= root.minimum && root.recommended <= root.maximum
+    width: Math.max(1, Style.space(2))
+    height: track.height + Style.space(6)
+    y: (root.height - height) / 2
+    x: track.width * Math.max(0, Math.min(1,
+         (root.recommended - root.minimum) / root.span)) - width / 2
+    color: Qt.alpha(root.foreground, 0.55)
+    radius: width / 2
   }
 
   Rectangle {

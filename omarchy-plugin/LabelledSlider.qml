@@ -17,6 +17,7 @@ Item {
   property int decimals: 0
   property color foreground: Color.menu.text
   property bool interactive: true
+  property real recommended: NaN
 
   signal committed(real value)
 
@@ -28,7 +29,13 @@ Item {
   Text {
     id: caption
     anchors.left: parent.left
-    text: root.label + (root.hint === "" ? "" : "  · " + root.hint)
+    text: {
+      var parts = [root.label]
+      if (root.hint !== "") parts.push(root.hint)
+      if (!isNaN(root.recommended))
+        parts.push("recommended " + root.recommended.toFixed(root.decimals) + root.unit)
+      return parts.join("  ·  ")
+    }
     color: Qt.darker(root.foreground, 1.35)
     font.family: Style.font.family
     font.pixelSize: Style.font.caption
@@ -58,6 +65,7 @@ Item {
     maximum: root.maximum
     step: root.step
     value: root.value
+    recommended: root.recommended
     onReleased: function (v) { root.committed(v) }
   }
 }
