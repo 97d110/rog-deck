@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Shortcut behaviour for ROG Deck.
+#
+# `omarchy-shell shell summon` only opens; pressing the shortcut again while
+# the window is already up does nothing, which feels broken when the window
+# is behind something. And plain `toggle` closes it even when it is merely
+# unfocused, so you cannot use the shortcut to bring it forward.
+#
+# So: closed -> open, open but unfocused -> focus, open and focused -> close.
+#
+# In practice the middle branch rarely fires on Hyprland: the window's
+# FocusScope keeps keyboard focus while it is open, so hyprctl reports it
+# focused and a second press closes it. That makes this a clean toggle, which
+# is what a launcher shortcut usually wants. To make the shortcut only ever
+# open/raise, delete the `omarchy-shell -q shell hide` branch below.
+set -uo pipefail
+
+TITLE="ROG Deck"
+
+is_open() {
+  hyprctl clients -j 2>/dev/null \
+    | grep -Fq "\"title\": \"$TITLE\""
+}
+
+is_focused() {
+  [ "$(hyprctl activewindow -j 2>/dev/null \
+       | python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("title",""))
+except Exception: print("")' 2>/dev/null)" = "$TITLE" ]
+}
+
+if ! command -v hyprctl >/dev/null 2>&1; then
+  # No Hyprland to ask; fall back to the shell's own toggle.
+  exec omarchy-shell -q shell toggle rog-deck '{}'
+fi
+
+if is_open; then
+  if is_focused; then
+    omarchy-shell -q shell hide rog-deck
+  else
+    hyprctl dispatch focuswindow "title:^${TITLE}$" >/dev/null
+  fi
+else
+  omarchy-shell -q shell summon rog-deck '{}'
+fi
