@@ -551,13 +551,20 @@ Item {
                 width: parent.width
                 visible: !!root.light
                 hint: "one behaviour at a time"
-                options: [
-                  { value: "off", text: "Off", description: "backlight dark" },
-                  { value: "effect", text: "Built-in effect",
-                    description: "a firmware Aura pattern" },
-                  { value: "ripple", text: "Reactive ripple",
-                    description: "a wave from each key you press" }
-                ]
+                // The ripple mode is only offered when its unit is actually
+                // installed; it can be disengaged deliberately, and offering
+                // a mode that cannot start is worse than not offering it.
+                options: {
+                  var out = [
+                    { value: "off", text: "Off", description: "backlight dark" },
+                    { value: "effect", text: "Built-in effect",
+                      description: "a firmware Aura pattern" }
+                  ]
+                  if (root.lighting && root.lighting.ripple_available)
+                    out.push({ value: "ripple", text: "Reactive ripple",
+                               description: "a wave from each key you press" })
+                  return out
+                }
                 current: root.light ? root.light.mode : null
                 foreground: root.foreground
                 onPicked: function (v) { root.sendLight({ mode: v }) }

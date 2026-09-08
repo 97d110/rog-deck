@@ -88,6 +88,19 @@ def save(values: dict[str, Any]) -> dict[str, Any]:
 RIPPLE_UNIT = "rog-deck-ripple.service"
 
 
+def ripple_available() -> bool:
+    """Whether the ripple unit is installed and startable.
+
+    It can be deliberately disengaged by moving the unit aside, in which case
+    the app should not offer a mode it cannot enter.
+    """
+    try:
+        asus.run("systemctl", "--user", "cat", RIPPLE_UNIT)
+        return True
+    except asus.CommandError:
+        return False
+
+
 def ripple_running() -> bool:
     try:
         return asus.run("systemctl", "--user", "is-active", RIPPLE_UNIT) == "active"
@@ -159,6 +172,7 @@ def status() -> dict[str, Any]:
         # What the hardware actually reports, so the UI can show a mismatch
         # rather than pretending.
         "hardware_brightness": aura.get("brightness"),
+        "ripple_available": ripple_available(),
         "ripple_running": ripple_running(),
         "ripple": ripple,
         "ripple_limits": ripple_config.LIMITS,
