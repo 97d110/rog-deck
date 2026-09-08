@@ -1,124 +1,32 @@
 # ROG Deck
 
-An Armoury Crate replacement for Linux, in your browser.
+An Armoury Crate replacement for Linux, as a native Omarchy app.
 
 ASUS ships no control software for Linux, and `rog-control-center` leaves most
 of the interesting firmware knobs untouched. ROG Deck exposes them: per-profile
 fan curves you can drag, CPU power limits, GPU MUX and power, battery charge
-care, keyboard Aura, the lid Slash light bar, and the trackpad NumberPad.
-
-Built for Omarchy / Hyprland, but it is a plain local web page and works on any
-desktop.
+care, keyboard Aura, the lid Slash light bar, the trackpad NumberPad, and a
+reactive per-key ripple effect.
 
 ![ROG Deck](docs/screenshot.png)
 
-## Features
+## What it looks like
 
-- **Performance profiles** — Quiet / Balanced / Performance. The firmware
-  re-scopes every power limit per profile, so the UI re-reads them on switch.
-- **Fan curves** — drag the eight firmware points for the CPU, GPU and mid
-  fans, with a live marker showing the current temperature. Keyboard accessible.
-- **Power & thermals** — `ppt_pl1_spl`, `ppt_pl2_sppt`, `ppt_pl3_fppt`.
-- **Graphics** — `supergfxctl` mode switching, GPU MUX, dGPU enable, total
-  board power, dynamic boost and thermal target.
-- **Battery** — charge limit (the big one for longevity) and live status.
-- **Lighting** — Aura brightness and all twelve keyboard effects. Each effect
-  only offers the controls it actually accepts, because `asusctl` hard-errors
-  when handed an argument an effect does not support (passing a colour to
-  `rainbow-cycle` is a failure, not a no-op).
-- **Slash lid light bar** — enable, brightness, and all sixteen animations
-  including the classic `Loading` sweep.
-- **NumberPad** — a real on/off switch for `asus-numberpad-driver`, so you
-  don't have to hold the trackpad corner, plus hold-time and auto-off tuning.
-- **Live telemetry with context** — every reading is a gauge showing where the
-  value sits between idle and that part's own ceiling, so you can tell "warm"
-  from "about to throttle" at a glance. Ceilings come from the hardware where
-  it publishes them (NVMe `temp1_crit`, the firmware's `nv_temp_target`,
-  nvidia's power limit) and are marked `(est)` where they had to be estimated.
-- **Follows your Omarchy theme** — colours are read from the active theme's
-  `colors.toml`, so `omarchy theme set` re-themes the dashboard too.
+It is a Quickshell plugin, summoned like the command palette, and it is
+**assembled from the Omarchy shell's own component library** rather than
+restyled to resemble it:
 
-Controls are generated from `/sys/class/firmware-attributes/asus-armoury`,
-which is self-describing (type, range, defaults, enum values). Anything your
-firmware exposes shows up, so this is not hard-coded to one laptop model.
-
-## Omarchy bar widget
-
-ROG Deck also ships as a native Omarchy shell plugin, so it sits on the bar
-next to the network and bluetooth widgets rather than living in a browser tab.
-
-```bash
-omarchy bar put rog-deck --before omarchy.power
-```
-
-The bar label shows the CPU temperature and the active profile, tinted with
-the same thresholds the gauges use. Clicking it opens a panel with the
-performance profile, keyboard brightness, and the ripple's switch, colour
-swatches, max brightness and fade time.
-
-It is built from the shell's own component library rather than restyled to
-look similar - `Panel`, `KeyboardPanel`, `PanelSectionHeader`,
-`PanelSeparator`, `PanelSlider` and `Toggle` from `qs.Ui`, with every colour
-and dimension coming from the `Color` and `Style` tokens in `qs.Commons`.
-That means it re-themes with `omarchy theme set` along with the rest of the
-shell, and picks up the spacing/border/font scale the user has configured.
-
-State comes from the HTTP service on `127.0.0.1:8737`, so the widget is a
-front-end rather than a second implementation of the hardware logic. The web
-dashboard remains the full view for fan curves and the deeper firmware knobs.
-
-`install.sh` symlinks `omarchy-plugin/` into `~/.config/omarchy/plugins/`, so
-edits in the checkout hot-reload in the running shell.
-
-## Reactive keyboard ripple (optional, off by default)
-
-On a per-key board, `rog-deck-ripple` draws a water-drop wave from whichever
-key you press: four concentric rings expanding outward, the leading ring
-brightest and each one behind it dimmer, fading as the wave leaves the edge.
-Type a word and the overlapping ripples light the whole board, then settle.
-
-```bash
-rog-deck-ripple                                  # try it in the foreground
-rog-deck-ripple --colour ff2d55 --speed 12       # hotter, faster
-rog-deck-ripple --rings 6 --spacing 0.9          # more, tighter rings
-rog-deck-ripple --dry-run                        # compute frames, touch nothing
-systemctl --user enable --now rog-deck-ripple    # run it every session
-```
-
-**It reads your keystrokes.** A wave has to start at the key you pressed, so
-the process reads key events from `/dev/input`. It uses only the key's
-position, keeps no history, writes nothing to disk and sends nothing off the
-machine — but it is a process that sees what you type, which is why it ships
-installed-but-disabled and you have to turn it on yourself. It reads only
-devices that report a full alphabet, so lid switches and power buttons are
-left alone.
-
-It restores the keyboard mode and brightness it found on exit, including on
-`systemctl --user stop` (SIGTERM is turned into a normal unwind so the restore
-still runs).
-
-### How it works
-
-| Piece | Source |
+| Piece | From |
 | --- | --- |
-| Is this board per-key? | `advanced_type` in `/usr/share/asusd/aura_support.ron` |
-| LED → HID packet offset | baked table generated from asusctl's `rog-aura` |
-| Physical key positions | rog-control-center's `layouts/<layout>_*.ron`, read at runtime |
-| Writing frames | `DirectAddressingRaw` on asusd — 11 × 64-byte HID packets |
-| Which key was pressed | `/dev/input/event*`, filtered to real keyboards |
+| Popup surface, key handling | `Panel`, `PanelKeyCatcher`, `BorderSurface` |
+| Section labels and rules | `PanelSectionHeader`, `PanelSeparator` |
+| Sliders and switches | `PanelSlider`, `Toggle` |
+| Every colour | `Color.menu.*` in `qs.Commons` |
+| Every spacing, border, font size | `Style` in `qs.Commons` |
 
-Because the layout is read at runtime and the packet table is shared across
-per-key ROG boards, this is not hard-coded to one laptop.
-
-Frame rate is capped around **30fps**: asusd's USB write for the 11 packets
-measures ~33ms, and that is the ceiling, not Python.
-
-## Requirements
-
-- Linux with `asusd` running (`asusctl` package)
-- Python 3.11+ — **no third-party Python packages**, only the standard library
-- Optional: `supergfxctl` for GPU mode switching, `nvidia-smi` for dGPU
-  telemetry, `asus-numberpad-driver` for NumberPad control
+Because those are the same objects the Wi-Fi and Bluetooth panels use, it
+re-themes with `omarchy theme set` and honours the spacing and font scale you
+have configured — no palette of its own to drift out of step.
 
 ## Install
 
@@ -128,31 +36,70 @@ cd ~/.local/src/rog-deck
 ./install.sh
 ```
 
-Then open <http://127.0.0.1:8737>, or launch "ROG Deck" from your app menu.
+Then open it:
+
+```bash
+omarchy-shell shell summon rog-deck '{}'
+```
+
+…or launch **ROG Deck** from your app menu, or bind it:
+
+```lua
+o.bind("SUPER + SHIFT + R", "ROG Deck", "omarchy-shell -q shell summon rog-deck {}")
+```
 
 Remove it again with `./uninstall.sh`. Neither script changes hardware settings.
 
-## Running it by hand
+## Features
 
-```bash
-rog-deck                      # loopback, port 8737
-rog-deck --port 9000
-rog-deck --interval 1.0       # sensor poll interval, seconds
-ROG_DECK_DEBUG=1 rog-deck     # log every request
+- **Performance profiles** — Quiet / Balanced / Performance. The firmware
+  re-scopes every power limit per profile, so the app re-reads them on switch.
+  It also surfaces asusd's separate AC and battery profiles, which otherwise
+  look like the machine changing its own settings when you unplug.
+- **Power & thermals** — `ppt_pl1_spl`, `ppt_pl2_sppt`, `ppt_pl3_fppt`.
+- **Graphics** — `supergfxctl` mode, GPU MUX, dGPU enable, board power,
+  dynamic boost, thermal target.
+- **Fan curves** — drag the eight firmware points per fan, with a live marker
+  showing the current temperature.
+- **Battery** — charge limit and live status.
+- **Lighting** — Aura brightness and all twelve keyboard effects. Each effect
+  only sends the arguments it accepts, because `asusctl` hard-errors when
+  handed one it does not support (a colour on `rainbow-cycle` is a failure,
+  not a no-op).
+- **Slash lid light bar** — on/off, brightness, and all sixteen animations
+  including the classic `Loading` sweep.
+- **NumberPad** — a switch for `asus-numberpad-driver`, plus hold-time and
+  auto-off tuning.
+- **Reactive keyboard ripple** — see below.
+- **Sensors with context** — every reading is a gauge showing where the value
+  sits between idle and that part's own ceiling, so you can tell "warm" from
+  "about to throttle". Ceilings come from the hardware where it publishes them
+  (NVMe `temp1_crit`, the firmware's `nv_temp_target`, nvidia's power limit)
+  and are marked `(est)` where they had to be estimated.
+
+Controls are generated from `/sys/class/firmware-attributes/asus-armoury`,
+which is self-describing (type, range, defaults, enum values). Anything your
+firmware exposes shows up, so this is not hard-coded to one laptop model.
+
+## Architecture
+
+```
+omarchy-plugin/     the app - Quickshell/QML, the only user interface
+rog_deck/           the service - owns every privileged path
 ```
 
-## Security
+The service reads sysfs (world-readable) and hands every privileged write to
+`asusd` over D-Bus via `asusctl`, which does its own authorization. **Nothing
+here runs as root**: each knob under `/sys` is `root:root 0644`, and the
+service deliberately holds no privileges of its own.
 
-The server **binds to loopback only** by default and has **no authentication**,
-because it changes hardware settings. `--host 0.0.0.0` will expose it to your
-whole network — it prints a warning, and you should only do it on a network you
-trust.
+The app talks to the service over JSON on `127.0.0.1:8737`. That is local IPC,
+not a website — there is no web UI, and `/` returns 404. Binding it anywhere
+but loopback is opt-in via `--host` and prints a warning, because the API
+changes hardware state and has no authentication.
 
-ROG Deck itself never runs as root. It reads sysfs (world-readable) and hands
-every privileged write to `asusd` over D-Bus via `asusctl`, which does its own
-authorization.
-
-## How it talks to the hardware
+Keeping the hardware layer in Python is deliberate: the ripple daemon needs
+D-Bus and evdev, and the firmware/fan-curve/aura logic is tested there.
 
 | Area | Read from | Written via |
 | --- | --- | --- |
@@ -164,16 +111,69 @@ authorization.
 | GPU mode | `supergfxctl -g` | `supergfxctl -m` |
 | Sensors | `/sys/class/hwmon`, `nvidia-smi` | — |
 | NumberPad | driver ini file | driver ini file |
+| Per-key ripple | — | `DirectAddressingRaw` on asusd |
+
+## Reactive keyboard ripple (optional, off by default)
+
+On a per-key board, `rog-deck-ripple` draws a water-drop wave from whichever
+key you press: the wavefront latches each key to full brightness as it arrives
+and the key then fades, so a typed word lights the whole board and settles. A
+second wave re-latches a key, restarting its fade.
+
+```bash
+rog-deck-ripple                      # try it in the foreground
+rog-deck-ripple --colour ff2d55 --speed 12
+rog-deck-ripple --steps 4            # stepped trail instead of a smooth fade
+rog-deck-ripple --dry-run            # compute frames, touch nothing
+systemctl --user enable --now rog-deck-ripple
+```
+
+Colour, brightness, speed, fade and trail are also in the app, and the running
+effect re-reads `~/.config/rog-deck/ripple.json` live.
+
+**It reads your keystrokes.** A wave has to start at the key you pressed, so
+the process reads key events from `/dev/input`. It uses only the key's
+position, keeps no history, writes nothing to disk and sends nothing off the
+machine — but it is a process that sees what you type, which is why it ships
+installed-but-disabled. It reads only devices reporting a full alphabet, so
+lid switches and power buttons are left alone, and it restores the keyboard
+mode and brightness it found on exit, including on `systemctl --user stop`.
+
+### How the per-key effect works
+
+| Piece | Source |
+| --- | --- |
+| Is this board per-key? | `advanced_type` in `/usr/share/asusd/aura_support.ron` |
+| LED → HID packet offset | baked table generated from asusctl's `rog-aura` |
+| Physical key positions | rog-control-center's `layouts/<layout>_*.ron`, at runtime |
+| Writing frames | `DirectAddressingRaw` — 11 × 64-byte HID packets |
+| Which key was pressed | `/dev/input/event*`, filtered to real keyboards |
+
+Frame rate is capped around **30fps**: asusd's USB write for the 11 packets
+measures ~33ms, and that is the ceiling, not Python.
+
+## Requirements
+
+- Omarchy (for the app; the service runs anywhere) with `asusd` running
+- Python 3.11+ — **no third-party Python packages**, standard library only
+- Optional: `supergfxctl` for GPU mode switching, `nvidia-smi` for dGPU
+  telemetry, `asus-numberpad-driver` for NumberPad control
+
+## Hacking
+
+Qt caches compiled QML per path, so after editing a plugin file run
+`omarchy restart shell` — `rescanPlugins` alone will not recompile it.
 
 ## Known limits
 
 - `asusctl` cannot read back Aura effects or Slash state, so those controls
-  show the action taken rather than stored state. Everything else reflects
+  send an action rather than reflecting stored state. Everything else shows
   real hardware state.
-- `charge_mode` is reported by firmware but rejected on write on some boards,
-  so it renders read-only.
+- `charge_mode` is reported by firmware but rejected on write on some boards.
 - Switching the GPU MUX needs a reboot; switching `supergfxctl` modes normally
-  ends your session. Both are confirmed before they run.
+  ends your session.
+- asusd will not answer aura property reads while the ripple is streaming
+  frames (`Aura control couldn't lock self`); reads via `asusctl` are fine.
 
 ## Tested on
 

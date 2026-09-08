@@ -57,17 +57,22 @@ echo "==> Installing the ripple unit (NOT enabled)"
 sed "s|@INSTALL_DIR@|$REPO_DIR|g" "$REPO_DIR/packaging/rog-deck-ripple.service" \
   > "$UNIT_DIR/rog-deck-ripple.service"
 
-echo "==> Installing the Omarchy bar widget"
-# A Quickshell plugin, symlinked so edits in the checkout hot-reload in the
-# shell. Adding it to the bar is left to the user: `omarchy bar put rog-deck`.
+echo "==> Installing the Omarchy app (Quickshell plugin)"
+# Symlinked so edits in the checkout are picked up. Note that Qt caches
+# compiled QML per path, so changing a plugin file needs `omarchy restart
+# shell` - `rescanPlugins` alone will not recompile it.
 OMARCHY_PLUGINS="$HOME/.config/omarchy/plugins"
 if [ -d "$HOME/.config/omarchy" ]; then
   mkdir -p "$OMARCHY_PLUGINS"
+  # Clear the target first: `ln -sfn` onto an existing *directory* creates the
+  # link inside it rather than replacing it.
+  rm -rf "$OMARCHY_PLUGINS/rog-deck"
   ln -sfn "$REPO_DIR/omarchy-plugin" "$OMARCHY_PLUGINS/rog-deck"
   echo "    linked $OMARCHY_PLUGINS/rog-deck"
+  command -v omarchy >/dev/null && omarchy plugin enable rog-deck >/dev/null 2>&1 || true
   command -v omarchy-shell >/dev/null && omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
 else
-  echo "    Omarchy not detected, skipping the bar widget"
+  echo "    Omarchy not detected; the app needs the Omarchy shell"
 fi
 
 echo "==> Installing desktop entry"
@@ -82,11 +87,14 @@ sleep 2
 
 if systemctl --user is-active --quiet "$SERVICE"; then
   echo
-  echo "ROG Deck is running -> http://127.0.0.1:8737"
+  echo "ROG Deck service is running."
+  echo
+  echo "Open the app:"
+  echo "  omarchy-shell shell summon rog-deck '{}'      # or launch \"ROG Deck\""
+  echo "  bind it in ~/.config/hypr/bindings.lua for a shortcut"
+  echo
   echo "  logs:    journalctl --user -u $SERVICE -f"
   echo "  stop:    systemctl --user stop $SERVICE"
-  echo "  cli:     rog-deck --help   (if ~/.local/bin is on your PATH)"
-  echo "  widget:  omarchy bar put rog-deck --before omarchy.power"
   echo
   echo "Optional, OFF by default - the reactive keyboard ripple. It reads key"
   echo "events to know where each wave starts; enable it only if that is fine:"

@@ -1,17 +1,21 @@
-"""HTTP server for ROG Deck.
+"""Local control service for ROG Deck.
 
-Deliberately stdlib-only: this is meant to be shareable on any Omarchy box
-without pulling a web framework in, and `python` is always already present.
+This is the app's back end, not a website: it owns every privileged path
+(reading sysfs, delegating writes to asusd) and speaks JSON over loopback so
+the Omarchy shell plugin - the only front end - can drive it. There is no web
+UI; the QML app in omarchy-plugin/ is the interface.
 
-Binds to loopback by default. The API changes hardware state and has no
-authentication, so exposing it on a LAN is opt-in via --host.
+Loopback HTTP is used purely as local IPC. It is stdlib-only so the service
+installs on any Omarchy box with nothing but `python`.
+
+The API changes hardware state and has no authentication, so binding it
+anywhere but loopback is opt-in via --host and warns.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import mimetypes
 import os
 import queue
 import threading
@@ -20,8 +24,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 
 from . import __version__, asus, ripple_config, sensors, theme as theme_mod
-
-STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
 Handler = Callable[[dict[str, Any]], Any]
 _GET: dict[str, Handler] = {}
@@ -358,7 +360,7 @@ class Deck(BaseHTTPRequestHandler):
             self._dispatch(handler, params)
             return
 
-        self._static(path)
+        self._send_json({"error": "not found"}, 404)
 
     def do_POST(self) -> None:  # noqa: N802
         path, _ = self._split()
@@ -414,21 +416,6 @@ class Deck(BaseHTTPRequestHandler):
         self.wfile.write(f"data: {json.dumps(snap)}\n\n".encode())
         self.wfile.flush()
 
-    def _static(self, path: str) -> None:
-        rel = "index.html" if path == "/" else path.lstrip("/")
-        target = os.path.normpath(os.path.join(STATIC_DIR, rel))
-        if not target.startswith(STATIC_DIR) or not os.path.isfile(target):
-            self._send_json({"error": "not found"}, 404)
-            return
-
-        kind = mimetypes.guess_type(target)[0] or "application/octet-stream"
-        with open(target, "rb") as fh:
-            body = fh.read()
-        self.send_response(200)
-        self.send_header("Content-Type", kind)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
 
 
 def main(argv: list[str] | None = None) -> int:

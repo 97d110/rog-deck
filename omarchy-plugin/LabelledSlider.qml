@@ -1,0 +1,63 @@
+import QtQuick
+import qs.Commons
+import qs.Ui
+
+// A PanelSlider with the shell's caption label above it and the live value on
+// the right. Commits on release so a drag sends one write, not forty.
+Item {
+  id: root
+
+  property string label: ""
+  property string hint: ""
+  property real value: 0
+  property real minimum: 0
+  property real maximum: 1
+  property real step: 0.05
+  property string unit: ""
+  property int decimals: 0
+  property var bar: null
+  property color foreground: Color.menu.text
+  property bool interactive: true
+
+  signal committed(real value)
+
+  implicitHeight: caption.implicitHeight + slider.implicitHeight + Style.spacing.xxs
+
+  Text {
+    id: caption
+    anchors.left: parent.left
+    text: root.label + (root.hint === "" ? "" : "  · " + root.hint)
+    color: Qt.darker(root.foreground, 1.35)
+    font.family: Style.font.family
+    font.pixelSize: Style.font.caption
+    elide: Text.ElideRight
+    width: parent.width - reading.width - Style.spacing.sm
+  }
+
+  Text {
+    id: reading
+    anchors.right: parent.right
+    anchors.baseline: caption.baseline
+    text: slider.liveValue.toFixed(root.decimals) + root.unit
+    color: Color.accent
+    font.family: Style.font.family
+    font.pixelSize: Style.font.caption
+    font.bold: true
+  }
+
+  PanelSlider {
+    id: slider
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: caption.bottom
+    anchors.topMargin: Style.spacing.xxs
+    bar: root.bar
+    enabled: root.interactive
+    opacity: root.interactive ? 1 : 0.45
+    minimum: root.minimum
+    maximum: root.maximum
+    step: root.step
+    value: root.value
+    onReleased: function (v) { root.committed(v) }
+  }
+}
