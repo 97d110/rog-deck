@@ -52,6 +52,110 @@ Item {
 
   // Saturated hues: the keyboard LEDs are full RGB, and the previous set
   // borrowed muted UI colours that looked washed out on the board.
+  // ---- explanations ----
+  // Written for someone who wants to know what a setting does and when to
+  // reach for it, not just what it is called.
+  readonly property string tipSensors:
+    "Live readings. Each bar runs from idle to that part's own ceiling: the "
+    + "temperature it throttles at, a fan's top speed, or a power limit.\n\n"
+    + "Green is fine. Amber is warm but working. Red means you are at the "
+    + "limit and the hardware will start slowing itself down to cope.\n\n"
+    + "A ceiling marked (est) is our estimate, because that part does not "
+    + "publish one."
+
+  readonly property string tipProfile:
+    "The master switch. Each profile carries its own CPU power limits and fan "
+    + "curves, so changing it moves several settings below at once.\n\n"
+    + "Quiet — least power, slowest fans. Best for battery, reading, video.\n"
+    + "Balanced — the everyday setting.\n"
+    + "Performance — most power, fastest fans. For games, compiling and "
+    + "rendering; noticeably louder and hotter.\n\n"
+    + "asusd also remembers a profile per power source, which is why this can "
+    + "change on its own when you plug in or unplug."
+
+  readonly property string tipPower:
+    "How many watts the CPU may draw, over three timescales.\n\n"
+    + "PL1 (sustained) — the long-run budget. This is the one that decides "
+    + "speed in anything lasting more than a minute.\n"
+    + "PL2 (boost) — a higher ceiling for short bursts, seconds at a time.\n"
+    + "PL3 (peak) — a brief spike, well under a second.\n\n"
+    + "Lowering them makes the laptop cooler, quieter and longer-lasting on "
+    + "battery, at the cost of speed. Raising them does the reverse and the "
+    + "fans will follow. \"Recommended\" is your firmware's own default for "
+    + "the profile you are in, so it changes when the profile does."
+
+  readonly property string tipGraphics:
+    "Which GPU drives your screen, and how much power it gets.\n\n"
+    + "GPU mode — Hybrid lets the integrated GPU draw the desktop and wakes "
+    + "the NVIDIA card only for demanding apps; best battery life and the "
+    + "usual choice. Integrated powers the NVIDIA card off entirely. "
+    + "AsusMuxDgpu gives everything to the NVIDIA card for maximum speed. "
+    + "Switching restarts your graphical session, so save first.\n\n"
+    + "Display MUX — whether the panel is wired to the NVIDIA card directly "
+    + "(Ultimate: a few percent more performance and lower latency in games, "
+    + "but the iGPU can no longer save power, so battery life drops) or "
+    + "through the iGPU (Optimus: better battery). It is a hardware switch, "
+    + "so it needs a reboot.\n\n"
+    + "GPU total power — the wattage budget for the card. The single biggest "
+    + "lever on GPU speed, and on heat.\n\n"
+    + "GPU dynamic boost — lets the laptop shift watts between CPU and GPU "
+    + "as needed. In a game the GPU usually wants them more, so leaving this "
+    + "high tends to give extra frames for free.\n\n"
+    + "GPU temp limit — where the card starts slowing itself to stay safe. "
+    + "Lower is cooler and quieter but caps performance sooner."
+
+  readonly property string tipFans:
+    "A fan curve maps temperature to fan speed: at each point, \"when the "
+    + "chip is this hot, spin this fast\". Drag a point, then apply — nothing "
+    + "is written until you do.\n\n"
+    + "Each profile has its own curves, so edits here only affect the profile "
+    + "you are in. Raising the curve keeps temperatures lower at the cost of "
+    + "noise; lowering it is quieter but can let the chip throttle.\n\n"
+    + "The dashed green line is the current temperature, so you can see which "
+    + "part of the curve you actually live on."
+
+  readonly property string tipBattery:
+    "Charge limit stops charging below full. Lithium cells age fastest when "
+    + "held at 100%, so if the laptop mostly sits on mains, 60–80% will "
+    + "noticeably extend its life. Set it back to 100% before travelling."
+
+  readonly property string tipLighting:
+    "One behaviour at a time.\n\n"
+    + "Off — backlight dark.\n"
+    + "Built-in effect — a pattern the keyboard firmware runs by itself.\n"
+    + "Reactive ripple — our effect, a wave from each key you press.\n\n"
+    + "Brightness is the keyboard's own level, which its Fn keys also change. "
+    + "It scales whatever is running."
+
+  readonly property string tipNumpad:
+    "The illuminated number pad drawn on the trackpad. Normally you hold the "
+    + "top-right corner for a second to toggle it; this is the same switch "
+    + "without the gesture.\n\n"
+    + "Auto-off dims it again after a spell of no use, so it does not sit lit "
+    + "all evening."
+
+  readonly property string tipSystem:
+    "Panel overdrive speeds up pixel transitions, which cuts ghosting in fast "
+    + "motion but can add slight overshoot around moving edges.\n\n"
+    + "Auto brightness uses the ambient light sensor.\n\n"
+    + "Boot sound plays the ROG chime at power-on."
+
+  // Explanation tip state. The tip is drawn in the window's top layer rather
+  // than beside each icon, because the scrolling container clips its children.
+  property string tipText: ""
+  property real tipX: 0
+  property real tipY: 0
+
+  function showTip(text, item) {
+    if (!item) return
+    var p = item.mapToItem(card, 0, item.height)
+    tipX = p.x
+    tipY = p.y + Style.spacing.sm
+    tipText = text
+  }
+
+  function hideTip() { tipText = "" }
+
   readonly property var swatches: [
     "#ff0000", "#ff6a00", "#ffd400", "#00ff3c",
     "#00e5ff", "#0066ff", "#c400ff", "#ffffff"
@@ -251,7 +355,7 @@ Item {
               width: (parent.width - Style.spacing.xl) / 2
               spacing: Style.spacing.md
 
-              PanelSectionHeader { text: "Sensors"; foreground: root.foreground }
+              SectionTitle { text: "Sensors"; info: root.tipSensors; host: root; foreground: root.foreground }
 
               Gauge {
                 width: parent.width
@@ -299,7 +403,7 @@ Item {
               }
 
               PanelSeparator { width: parent.width }
-              PanelSectionHeader { text: "Performance profile"; foreground: root.foreground }
+              SectionTitle { text: "Performance profile"; info: root.tipProfile; host: root; foreground: root.foreground }
 
               RadioGroup {
                 width: parent.width
@@ -330,7 +434,7 @@ Item {
               }
 
               PanelSeparator { width: parent.width }
-              PanelSectionHeader { text: "Power & thermals"; foreground: root.foreground }
+              SectionTitle { text: "Power & thermals"; info: root.tipPower; host: root; foreground: root.foreground }
 
               Repeater {
                 model: [
@@ -361,7 +465,7 @@ Item {
               }
 
               PanelSeparator { width: parent.width }
-              PanelSectionHeader { text: "Graphics"; foreground: root.foreground }
+              SectionTitle { text: "Graphics"; info: root.tipGraphics; host: root; foreground: root.foreground }
 
               RadioGroup {
                 width: parent.width
@@ -430,7 +534,7 @@ Item {
               }
 
               PanelSeparator { width: parent.width }
-              PanelSectionHeader { text: "Battery"; foreground: root.foreground }
+              SectionTitle { text: "Battery"; info: root.tipBattery; host: root; foreground: root.foreground }
 
               Gauge {
                 width: parent.width
@@ -464,8 +568,10 @@ Item {
               width: (parent.width - Style.spacing.xl) / 2
               spacing: Style.spacing.md
 
-              PanelSectionHeader {
+              SectionTitle {
                 text: "Fan curves"
+                info: root.tipFans
+                host: root
                 foreground: root.foreground
                 visible: root.curves.length > 0
               }
@@ -545,7 +651,7 @@ Item {
 
               // ---------------- keyboard lighting ----------------
               PanelSeparator { width: parent.width }
-              PanelSectionHeader { text: "Keyboard lighting"; foreground: root.foreground }
+              SectionTitle { text: "Keyboard lighting"; info: root.tipLighting; host: root; foreground: root.foreground }
 
               RadioGroup {
                 width: parent.width
@@ -713,8 +819,10 @@ Item {
 
               // ---------------- numpad ----------------
               PanelSeparator { width: parent.width; visible: !!(root.numpad && root.numpad.supported) }
-              PanelSectionHeader {
+              SectionTitle {
                 text: "Trackpad numpad"
+                info: root.tipNumpad
+                host: root
                 foreground: root.foreground
                 visible: !!(root.numpad && root.numpad.supported)
               }
@@ -747,7 +855,7 @@ Item {
 
               // ---------------- system ----------------
               PanelSeparator { width: parent.width }
-              PanelSectionHeader { text: "System"; foreground: root.foreground }
+              SectionTitle { text: "System"; info: root.tipSystem; host: root; foreground: root.foreground }
 
               Repeater {
                 model: [
@@ -774,6 +882,45 @@ Item {
                 }
               }
             }
+          }
+        }
+
+        // ---- explanation tip ----
+        BorderSurface {
+          id: tip
+          visible: root.tipText !== ""
+          opacity: root.tipText !== "" ? 1 : 0
+          width: Math.min(Style.space(380), card.width - Style.spacing.xl)
+          height: tipBody.implicitHeight + Style.spacing.lg * 2
+          // Keep it on screen: nudge left/up when it would overhang.
+          x: Math.max(Style.spacing.sm,
+               Math.min(root.tipX, card.width - width - Style.spacing.sm))
+          y: Math.max(Style.spacing.sm,
+               Math.min(root.tipY, card.height - height - Style.spacing.sm))
+          z: 100
+          color: Color.tooltip.background
+          borderSpec: Border.surfaceSpec("tooltip", "border", Color.tooltip.border,
+                                         Math.max(1, Style.space(1)))
+          radius: Style.cornerRadius
+
+          Behavior on opacity { NumberAnimation { duration: 130 } }
+          // A small rise on appear, which reads as the tip coming forward.
+          transform: Translate { y: root.tipText !== "" ? 0 : Style.space(6)
+            Behavior on y { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+          }
+
+          Text {
+            id: tipBody
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: Style.spacing.lg
+            text: root.tipText
+            color: Color.tooltip.text
+            wrapMode: Text.WordWrap
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+            lineHeight: 1.35
           }
         }
 
