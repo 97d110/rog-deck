@@ -26,6 +26,10 @@ Item {
   property var deck: null
   property var snapshot: null
   property string errorText: ""
+  // supergfxd answers a mode change with things like "A reboot is required to
+  // complete the mode change". Showing it is the difference between a switch
+  // that looks broken and one that is simply waiting for a restart.
+  property string gfxNotice: ""
   property string activeFan: "cpu"
   property var draftCurve: []
   property bool curveDirty: false
@@ -91,7 +95,10 @@ Item {
     + "usual choice. Integrated powers the NVIDIA card off entirely. "
     + "AsusMuxDgpu gives everything to the NVIDIA card for maximum speed. "
     + "Switching restarts your graphical session, so save first.\n\n"
-    + "Display MUX — whether the panel is wired to the NVIDIA card directly "
+    + "The MUX (whether the panel is wired to the NVIDIA card directly) is "
+    + "part of GPU mode above: AsusMuxDgpu is that wiring. It is a hardware "
+    + "switch, so it needs a reboot.\n\n"
+    + "Note — whether the panel is wired to the NVIDIA card directly "
     + "(Ultimate: a few percent more performance and lower latency in games, "
     + "but the iGPU can no longer save power, so battery life drops) or "
     + "through the iGPU (Optimus: better battery). It is a hardware switch, "
@@ -605,21 +612,22 @@ Item {
                   foreground: root.foreground
                   onPicked: function (v) {
                     if (root.graphics && v === root.graphics.mode) return
-                    root.send("/api/graphics", { mode: v })
+                    Api.post("/api/graphics", { mode: v }, function (data, err) {
+                      root.errorText = err === null ? "" : err
+                      root.gfxNotice = (data && data.notice) ? data.notice : ""
+                      root.refresh()
+                    })
                   }
                 }
 
-                RadioGroup {
+                Text {
+                  visible: root.gfxNotice !== ""
                   width: parent.width
-                  readonly property var a: root.attr("gpu_mux_mode")
-                  visible: !!a
-                  label: "Display MUX"
-                  hint: "needs a reboot"
-                  options: root.enumOptions(a, { 0: "Ultimate — dGPU drives the display",
-                                                 1: "Optimus — hybrid" })
-                  current: a ? a.current : null
-                  foreground: root.foreground
-                  onPicked: function (v) { root.send("/api/attribute", { name: "gpu_mux_mode", value: v }) }
+                  wrapMode: Text.WordWrap
+                  text: root.gfxNotice
+                  color: Color.accent
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
                 }
 
                 RadioGroup {

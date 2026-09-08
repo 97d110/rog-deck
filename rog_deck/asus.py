@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from typing import Any
 
 FW_ATTRS = "/sys/class/firmware-attributes/asus-armoury/attributes"
@@ -100,12 +101,38 @@ def firmware_attributes() -> list[dict[str, Any]]:
     return attrs
 
 
+# Changes that only take effect after a restart, so an unchanged
+# current_value right after writing is expected rather than a failure.
+REBOOT_SCOPED = {"gpu_mux_mode"}
+
+
 def set_firmware_attribute(name: str, value: int) -> None:
-    # Guard against path traversal and against writing knobs the firmware on
-    # this machine does not actually expose.
-    if not os.path.isdir(os.path.join(FW_ATTRS, os.path.basename(name))):
+    """Write an attribute and confirm the firmware kept it.
+
+    `asusctl armoury set` exits 0 even when the firmware discards the value,
+    which it does for most of the power and GPU knobs on some boards - the
+    active platform profile governs them and asusd re-applies the profile's
+    own figures. Without reading the value back, the app reports success while
+    nothing changed, which is worse than refusing.
+    """
+    attr = os.path.basename(name)
+    if not os.path.isdir(os.path.join(FW_ATTRS, attr)):
         raise CommandError(f"unknown firmware attribute: {name}")
-    run("asusctl", "armoury", "set", os.path.basename(name), str(int(value)))
+
+    wanted = int(value)
+    run("asusctl", "armoury", "set", attr, str(wanted))
+
+    if attr in REBOOT_SCOPED:
+        return
+
+    time.sleep(0.4)  # asusd applies asynchronously
+    settled = _read_int(f"{FW_ATTRS}/{attr}/current_value")
+    if settled is not None and settled != wanted:
+        raise CommandError(
+            f"the firmware kept {attr} at {settled} instead of {wanted}. "
+            "On this board the active performance profile governs it, so it "
+            "cannot be set independently - change the profile instead."
+        )
 
 
 def pending_reboot() -> bool:
@@ -406,8 +433,14 @@ def graphics() -> dict[str, Any]:
         return {"supported": False, "error": str(exc)}
 
 
-def set_graphics_mode(mode: str) -> None:
-    run("supergfxctl", "-m", mode)
+def set_graphics_mode(mode: str) -> str:
+    """Switch GPU mode, returning supergfxd's own message.
+
+    supergfxd replies with things like "A reboot is required to complete the
+    mode change", which the user needs to see - a silent success looks like
+    nothing happened.
+    """
+    return run("supergfxctl", "-m", mode).strip()
 
 
 # --------------------------------------------------------------------------

@@ -315,8 +315,8 @@ def set_slash(body: dict[str, Any]) -> dict[str, Any]:
 
 @post("/api/graphics")
 def set_graphics(body: dict[str, Any]) -> dict[str, Any]:
-    asus.set_graphics_mode(str(body["mode"]))
-    return {"graphics": asus.graphics()}
+    message = asus.set_graphics_mode(str(body["mode"]))
+    return {"graphics": asus.graphics(), "notice": message}
 
 
 @post("/api/numpad")
