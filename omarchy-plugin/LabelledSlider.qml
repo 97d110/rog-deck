@@ -1,9 +1,9 @@
 import QtQuick
 import qs.Commons
-import qs.Ui
 
-// A PanelSlider with the shell's caption label above it and the live value on
-// the right. Commits on release so a drag sends one write, not forty.
+// A DragSlider with a caption label above it and the live value on the right.
+// Commits on release so a drag sends one write, not forty - and never on
+// scroll, so scrolling the page cannot change a power limit.
 Item {
   id: root
 
@@ -15,13 +15,15 @@ Item {
   property real step: 0.05
   property string unit: ""
   property int decimals: 0
-  property var bar: null
   property color foreground: Color.menu.text
   property bool interactive: true
 
   signal committed(real value)
 
-  implicitHeight: caption.implicitHeight + slider.implicitHeight + Style.spacing.xxs
+  readonly property real rowHeight:
+    caption.implicitHeight + slider.controlHeight + Style.spacing.xxs
+  implicitHeight: rowHeight
+  height: rowHeight
 
   Text {
     id: caption
@@ -45,15 +47,13 @@ Item {
     font.bold: true
   }
 
-  PanelSlider {
+  DragSlider {
     id: slider
     anchors.left: parent.left
     anchors.right: parent.right
     anchors.top: caption.bottom
     anchors.topMargin: Style.spacing.xxs
-    bar: root.bar
-    enabled: root.interactive
-    opacity: root.interactive ? 1 : 0.45
+    interactive: root.interactive
     minimum: root.minimum
     maximum: root.maximum
     step: root.step

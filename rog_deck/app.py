@@ -23,7 +23,8 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 
-from . import __version__, asus, ripple_config, sensors, theme as theme_mod
+from . import (__version__, asus, lighting as lighting_mod, ripple_config,
+               sensors, theme as theme_mod)
 
 Handler = Callable[[dict[str, Any]], Any]
 _GET: dict[str, Handler] = {}
@@ -117,6 +118,7 @@ def state(_: dict[str, Any]) -> dict[str, Any]:
         "graphics": asus.graphics(),
         "numpad": asus.numpad(),
         "ripple": _ripple_state(),
+        "lighting": lighting_mod.status(),
         "fan_curves": _fan_curves_for(profile.get("current")),
     }
 
@@ -204,6 +206,18 @@ def set_ripple(body: dict[str, Any]) -> dict[str, Any]:
             raise asus.CommandError(f"could not {action} at login: {exc}") from exc
 
     return {"ripple": _ripple_state()}
+
+
+@get("/api/lighting")
+def lighting_now(_: dict[str, Any]) -> dict[str, Any]:
+    return lighting_mod.status()
+
+
+@post("/api/lighting")
+def set_lighting(body: dict[str, Any]) -> dict[str, Any]:
+    # One call sets mode and parameters and drives the hardware, so the UI
+    # cannot leave brightness, effect and ripple disagreeing with each other.
+    return {"lighting": lighting_mod.apply(body)}
 
 
 @get("/api/theme")

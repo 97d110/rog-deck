@@ -6,9 +6,9 @@
   "author": "97d110",
   "description": "ASUS ROG laptop control: profile, power, GPU, fans, lighting",
   "kinds": [
-    "overlay"
+    "panel"
   ],
   "entryPoints": {
-    "overlay": "RogDeck.qml"
+    "panel": "RogDeck.qml"
   }
 }
